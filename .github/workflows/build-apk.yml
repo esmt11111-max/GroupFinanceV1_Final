@@ -18,25 +18,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract and Move Files to Root
+      - name: Extract ZIP File
         shell: bash
         run: |
           set -e
           ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
           if [ -n "$ZIP_FILE" ]; then
             echo "Found ZIP file: $ZIP_FILE, extracting..."
-            mkdir -p temp_extracted
-            unzip -q "$ZIP_FILE" -d temp_extracted
-            
-            # نقل جميع المحتويات إلى جذر المستودع مباشرة
-            shopt -s dotglob
-            cp -r temp_extracted/* ./
-            shopt -u dotglob
-            
-            echo "=== Files in root after moving ==="
-            ls -la
+            unzip -q "$ZIP_FILE" -d unzipped_project
           else
-            echo "No zip file found."
+            echo "No zip file found in root."
           fi
 
       - name: Set up Java 17
@@ -49,22 +40,19 @@ jobs:
         shell: bash
         run: |
           set -e
-          # التحقق من وجود gradlew في الجذر أو تحويله إلى قابل للتنفيذ
-          if [ -f "./gradlew" ]; then
+          # بحث شامل وأوتوماتيكي عن مجلد المشروع الذي يحتوي على ملف gradlew
+          GRADLEW_PATH=$(find . -name "gradlew" -type f | head -n 1)
+          
+          if [ -n "$GRADLEW_PATH" ]; then
+            PROJECT_DIR=$(dirname "$GRADLEW_PATH")
+            echo "Found gradlew in directory: $PROJECT_DIR"
+            cd "$PROJECT_DIR"
             chmod +x ./gradlew
             ./gradlew assembleDebug
           else
-            # البحث عنه في أي مجلد فرعي إن وجد
-            PROJECT_DIR=$(find . -maxdepth 2 -name "gradlew" -type f -exec dirname {} \; | head -n 1)
-            if [ -n "$PROJECT_DIR" ]; then
-              echo "Found gradlew in: $PROJECT_DIR"
-              cd "$PROJECT_DIR"
-              chmod +x ./gradlew
-              ./gradlew assembleDebug
-            else
-              echo "Error: gradlew not found!"
-              exit 1
-            fi
+            echo "Error: gradlew could not be found anywhere in the repository!"
+            find . -maxdepth 4
+            exit 1
           fi
 
       - name: Upload APK
