@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract ZIP Automatically
+      - name: Extract ZIP and Locate Project
         shell: bash
         run: |
           set -e
@@ -27,15 +27,6 @@ jobs:
             echo "Found ZIP file: $ZIP_FILE, extracting..."
             mkdir -p extracted_files
             unzip -q "$ZIP_FILE" -d extracted_files
-            
-            INNER_DIR=$(find extracted_files -mindepth 1 -maxdepth 1 -type d | head -n 1)
-            if [ -n "$INNER_DIR" ]; then
-              shopt -s dotglob
-              mv "$INNER_DIR"/* ./
-              shopt -u dotglob
-            else
-              cp -r extracted_files/* ./
-            fi
           else
             echo "No zip file found."
           fi
@@ -47,14 +38,25 @@ jobs:
           java-version: '17'
 
       - name: Build APK
+        shell: bash
         run: |
-          chmod +x ./gradlew
-          ./gradlew assembleDebug
+          set -e
+          # البحث عن المجلد الذي يحتوي على gradlew والانتقال إليه تلقائياً
+          PROJECT_DIR=$(find . -name "gradlew" -type f -exec dirname {} \;)
+          if [ -n "$PROJECT_DIR" ]; then
+            echo "Found gradlew in: $PROJECT_DIR"
+            cd "$PROJECT_DIR"
+            chmod +x ./gradlew
+            ./gradlew assembleDebug
+          else
+            echo "Error: gradlew not found anywhere!"
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: GroupFinance-V6-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: '**/build/outputs/apk/debug/app-debug.apk'
           if-no-files-found: error
           retention-days: 30
