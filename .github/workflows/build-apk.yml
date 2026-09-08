@@ -18,22 +18,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Inspect Files and Extract ZIP
+      - name: Extract and Move Files to Root
         shell: bash
         run: |
           set -e
-          echo "=== Root Directory Contents ==="
-          ls -la
-          
           ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
           if [ -n "$ZIP_FILE" ]; then
             echo "Found ZIP file: $ZIP_FILE, extracting..."
-            mkdir -p extracted_files
-            unzip -q "$ZIP_FILE" -d extracted_files
-            echo "=== Extracted Files Contents ==="
-            ls -la extracted_files
+            mkdir -p temp_extracted
+            unzip -q "$ZIP_FILE" -d temp_extracted
+            
+            # نقل جميع المحتويات إلى جذر المستودع مباشرة
+            shopt -s dotglob
+            cp -r temp_extracted/* ./
+            shopt -u dotglob
+            
+            echo "=== Files in root after moving ==="
+            ls -la
           else
-            echo "No zip file found in root."
+            echo "No zip file found."
           fi
 
       - name: Set up Java 17
@@ -46,18 +49,22 @@ jobs:
         shell: bash
         run: |
           set -e
-          # البحث الشامل عن مجلد يحتوي على app و gradlew
-          PROJECT_DIR=$(find . -name "gradlew" -type f -exec dirname {} \; | head -n 1)
-          
-          if [ -n "$PROJECT_DIR" ]; then
-            echo "Found gradlew in: $PROJECT_DIR"
-            cd "$PROJECT_DIR"
+          # التحقق من وجود gradlew في الجذر أو تحويله إلى قابل للتنفيذ
+          if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug
           else
-            echo "Error: gradlew still not found. Let's list all files in workspace:"
-            find . -maxdepth 3
-            exit 1
+            # البحث عنه في أي مجلد فرعي إن وجد
+            PROJECT_DIR=$(find . -maxdepth 2 -name "gradlew" -type f -exec dirname {} \; | head -n 1)
+            if [ -n "$PROJECT_DIR" ]; then
+              echo "Found gradlew in: $PROJECT_DIR"
+              cd "$PROJECT_DIR"
+              chmod +x ./gradlew
+              ./gradlew assembleDebug
+            else
+              echo "Error: gradlew not found!"
+              exit 1
+            fi
           fi
 
       - name: Upload APK
@@ -67,4 +74,3 @@ jobs:
           path: '**/build/outputs/apk/debug/app-debug.apk'
           if-no-files-found: error
           retention-days: 30
- 
