@@ -18,17 +18,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract ZIP and Locate Project
+      - name: Inspect Files and Extract ZIP
         shell: bash
         run: |
           set -e
+          echo "=== Root Directory Contents ==="
+          ls -la
+          
           ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
           if [ -n "$ZIP_FILE" ]; then
             echo "Found ZIP file: $ZIP_FILE, extracting..."
             mkdir -p extracted_files
             unzip -q "$ZIP_FILE" -d extracted_files
+            echo "=== Extracted Files Contents ==="
+            ls -la extracted_files
           else
-            echo "No zip file found."
+            echo "No zip file found in root."
           fi
 
       - name: Set up Java 17
@@ -41,15 +46,17 @@ jobs:
         shell: bash
         run: |
           set -e
-          # البحث عن المجلد الذي يحتوي على gradlew والانتقال إليه تلقائياً
-          PROJECT_DIR=$(find . -name "gradlew" -type f -exec dirname {} \;)
+          # البحث الشامل عن مجلد يحتوي على app و gradlew
+          PROJECT_DIR=$(find . -name "gradlew" -type f -exec dirname {} \; | head -n 1)
+          
           if [ -n "$PROJECT_DIR" ]; then
             echo "Found gradlew in: $PROJECT_DIR"
             cd "$PROJECT_DIR"
             chmod +x ./gradlew
             ./gradlew assembleDebug
           else
-            echo "Error: gradlew not found anywhere!"
+            echo "Error: gradlew still not found. Let's list all files in workspace:"
+            find . -maxdepth 3
             exit 1
           fi
 
@@ -60,3 +67,4 @@ jobs:
           path: '**/build/outputs/apk/debug/app-debug.apk'
           if-no-files-found: error
           retention-days: 30
+ 
