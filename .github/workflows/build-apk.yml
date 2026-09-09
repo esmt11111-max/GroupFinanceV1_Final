@@ -37,25 +37,15 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Inject Perfect WebView MainActivity
+      - name: Fix MainActivity for Local WebView
         shell: bash
         run: |
           set -e
-          echo "Writing a robust and clean MainActivity.java for local HTML assets..."
-          
-          # العثور على مسار ملف MainActivity.java الحقيقي في المشروع
           MAIN_JAVA=$(find . -name "MainActivity.java" | head -n 1)
-          
           if [ -n "$MAIN_JAVA" ]; then
-            JAVA_DIR=$(dirname "$MAIN_JAVA")
-            PACKAGE_LINE=$(grep -m 1 "^package " "$MAIN_JAVA" || echo "package com.groupfinance.app;")
-            
-            echo "Target Java file found at: $MAIN_JAVA"
-            echo "Using package: $PACKAGE_LINE"
-            
-            # إعادة كتابة MainActivity بكود WebView مثالي وداعم للجافاسكريبت محلياً
-            cat << EOF > "$MAIN_JAVA"
-$PACKAGE_LINE
+            echo "Rewriting $MAIN_JAVA to load local assets properly..."
+            cat << 'EOF' > "$MAIN_JAVA"
+package com.groupfinance.app;
 
 import android.os.Bundle;
 import android.webkit.WebSettings;
@@ -69,7 +59,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
         webView = new WebView(this);
         setContentView(webView);
 
@@ -77,17 +66,8 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
-        webSettings.setAllowContentAccess(true);
 
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                view.loadUrl(url);
-                return true;
-            }
-        });
-
-        // تحميل الصفحة الرئيسية المحلية من مجلد الأصول (assets)
+        webView.setWebViewClient(new WebViewClient());
         webView.loadUrl("file:///android_asset/index.html");
     }
 
@@ -101,7 +81,7 @@ public class MainActivity extends AppCompatActivity {
     }
 }
 EOF
-            echo "MainActivity successfully replaced with a clean working version."
+            echo "MainActivity rewritten successfully."
           fi
 
       - name: Build APK
