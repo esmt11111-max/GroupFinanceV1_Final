@@ -28,6 +28,7 @@ jobs:
             unzip -q "$ZIP_FILE" -d unzipped_project
           else
             echo "No zip file found in root."
+            exit 1
           fi
 
       - name: Set up Java 17
@@ -36,24 +37,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Auto-Fix and Remove PDF Errors
-        shell: bash
-        run: |
-          set -e
-          echo "Searching and removing problematic PDF print code..."
-          # مسح الأسطر التي تسبب المشكلة في ملفات الجافا تلقائيا لتجاوز الخطأ
-          find . -name "*.java" -type f -exec sed -i '/PrintDocumentAdapter/d' {} +
-          find . -name "*.java" -type f -exec sed -i '/LayoutResultCallback/d' {} +
-          find . -name "*.java" -type f -exec sed -i '/WriteResultCallback/d' {} +
-          echo "Code cleaned successfully."
-
       - name: Build APK
         shell: bash
         run: |
           set -e
-          if [ -d "unzipped_project" ]; then
-            cd unzipped_project
-          fi
+          cd unzipped_project
           
           if [ ! -f "./gradlew" ]; then
             gradle wrapper
