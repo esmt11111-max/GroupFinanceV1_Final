@@ -36,24 +36,23 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Build APK
+      - name: Build APK with Auto-Gradlew
         shell: bash
         run: |
           set -e
-          # بحث شامل وأوتوماتيكي عن مجلد المشروع الذي يحتوي على ملف gradlew
-          GRADLEW_PATH=$(find . -name "gradlew" -type f | head -n 1)
-          
-          if [ -n "$GRADLEW_PATH" ]; then
-            PROJECT_DIR=$(dirname "$GRADLEW_PATH")
-            echo "Found gradlew in directory: $PROJECT_DIR"
-            cd "$PROJECT_DIR"
-            chmod +x ./gradlew
-            ./gradlew assembleDebug
-          else
-            echo "Error: gradlew could not be found anywhere in the repository!"
-            find . -maxdepth 4
-            exit 1
+          # البحث عن مجلد المشروع الداخلي
+          if [ -d "unzipped_project" ]; then
+            cd unzipped_project
           fi
+          
+          # إذا لم يكن gradlew موجوداً، سنقوم بتوليده تلقائياً عبر gradle wrapper
+          if [ ! -f "./gradlew" ]; then
+            echo "gradlew not found, generating it automatically..."
+            gradle wrapper
+          fi
+          
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
