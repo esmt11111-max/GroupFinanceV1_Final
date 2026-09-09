@@ -37,13 +37,72 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Auto-Fix ChatGPT Mistake
+      - name: Inject Perfect WebView MainActivity
         shell: bash
         run: |
           set -e
-          echo "Removing missing AndroidBridge call..."
-          # هذا السطر سيبحث عن خطأ ChatGPT ويمسحه تماماً لكي يكتمل البناء
-          find . -name "*.java" -type f -exec sed -i '/AndroidBridge/d' {} +
+          echo "Writing a robust and clean MainActivity.java for local HTML assets..."
+          
+          # العثور على مسار ملف MainActivity.java الحقيقي في المشروع
+          MAIN_JAVA=$(find . -name "MainActivity.java" | head -n 1)
+          
+          if [ -n "$MAIN_JAVA" ]; then
+            JAVA_DIR=$(dirname "$MAIN_JAVA")
+            PACKAGE_LINE=$(grep -m 1 "^package " "$MAIN_JAVA" || echo "package com.groupfinance.app;")
+            
+            echo "Target Java file found at: $MAIN_JAVA"
+            echo "Using package: $PACKAGE_LINE"
+            
+            # إعادة كتابة MainActivity بكود WebView مثالي وداعم للجافاسكريبت محلياً
+            cat << EOF > "$MAIN_JAVA"
+$PACKAGE_LINE
+
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import androidx.appcompat.app.AppCompatActivity;
+
+public class MainActivity extends AppCompatActivity {
+    private WebView webView;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        
+        webView = new WebView(this);
+        setContentView(webView);
+
+        WebSettings webSettings = webView.getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setDomStorageEnabled(true);
+        webSettings.setAllowFileAccess(true);
+        webSettings.setAllowContentAccess(true);
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                view.loadUrl(url);
+                return true;
+            }
+        });
+
+        // تحميل الصفحة الرئيسية المحلية من مجلد الأصول (assets)
+        webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+}
+EOF
+            echo "MainActivity successfully replaced with a clean working version."
+          fi
 
       - name: Build APK
         shell: bash
