@@ -8,7 +8,7 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -22,18 +22,26 @@ jobs:
         shell: bash
         run: |
           set -e
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name "GroupFinanceV8_UPDATE_BACK*.zip" | head -n 1)
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name "GroupFinanceV8_UPDATE_BACK*.zip" -print -quit)
+
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: V8 ZIP not found."
             exit 1
           fi
+
+          echo "Using ZIP: $ZIP_FILE"
+
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
+
           PROJECT_DIR=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print -quit | xargs -r dirname)
+
           if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: Android project not found."
             exit 1
           fi
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Set up Java 17
@@ -49,12 +57,40 @@ jobs:
 
       - name: Build V8 APK
         working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        run: |
+          gradle :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Upload V8 APK
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not created."
+            exit 1
+          fi
+
+          echo "APK created successfully:"
+          ls -lh "$APK"
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: GroupFinance-V8-Update
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish APK Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk"
+          TAG="v8-build-${{ github.run_number }}"
+
+          gh release create "$TAG" "$APK" \
+            --repo "${{ github.repository }}" \
+            --title "GroupFinance V8 APK" \
+            --notes "GroupFinance V8 corrected APK"
