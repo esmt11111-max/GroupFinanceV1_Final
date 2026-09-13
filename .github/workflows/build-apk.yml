@@ -24,8 +24,6 @@ jobs:
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: Exact V8 source ZIP not found:"
             echo "$ZIP_FILE"
-            echo ""
-            echo "Files in repository root:"
             ls -lah
             exit 1
           fi
@@ -76,19 +74,33 @@ jobs:
         run: |
           set -e
 
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$PROJECT_DIR/fixed-v8-release.jks"
+          mkdir -p "$PROJECT_DIR/app"
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode \
+            > "$PROJECT_DIR/app/fixed-v8-release.jks"
 
           cat > "$PROJECT_DIR/signing.properties" <<EOF
-          storeFile=fixed-v8-release.jks
+          storeFile=app/fixed-v8-release.jks
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
           keyPassword=$ANDROID_KEY_PASSWORD
           EOF
 
-          chmod 600 "$PROJECT_DIR/fixed-v8-release.jks"
+          chmod 600 "$PROJECT_DIR/app/fixed-v8-release.jks"
           chmod 600 "$PROJECT_DIR/signing.properties"
 
           echo "Fixed signing key prepared."
+
+      - name: Check signing files
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking keystore:"
+          ls -lh "$PROJECT_DIR/app/fixed-v8-release.jks"
+
+          echo "Checking signing.properties:"
+          ls -lh "$PROJECT_DIR/signing.properties"
 
       - name: Build V8 Release APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -100,7 +112,7 @@ jobs:
         run: |
           set -e
 
-          APK="${PROJECT_DIR}/app/build/outputs/apk/release/app-release.apk"
+          APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
 
           if [ ! -f "$APK" ]; then
             echo "ERROR: Release APK was not created."
@@ -117,8 +129,7 @@ jobs:
             exit 1
           fi
 
-          echo "Verifying APK signature..."
-
+          echo "Verifying APK signature:"
           "$APKSIGNER" verify --verbose "$APK"
 
       - name: Upload signed V8 APK
