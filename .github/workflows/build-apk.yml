@@ -43,7 +43,7 @@ jobs:
 
           unzip -q "GroupFinanceV8_FIXED_SIGNING_READY.zip" -d extracted
 
-          PROJECT_DIR="$(find extracted -type f -name settings.gradle -o -name settings.gradle.kts | head -n 1 | xargs -r dirname)"
+          PROJECT_DIR="$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit | xargs -r dirname)"
 
           if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: Android project was not found."
@@ -51,6 +51,7 @@ jobs:
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
           echo "Android project:"
           echo "$PROJECT_DIR"
 
@@ -60,7 +61,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -92,7 +93,7 @@ jobs:
       - name: Build V8 Release APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          ./gradlew :app:assembleRelease --stacktrace --no-daemon
+          gradle :app:assembleRelease --stacktrace --no-daemon
 
       - name: Verify Release APK
         shell: bash
@@ -117,6 +118,7 @@ jobs:
           fi
 
           echo "Verifying APK signature..."
+
           "$APKSIGNER" verify --verbose "$APK"
 
       - name: Upload signed V8 APK
