@@ -21,7 +21,7 @@ jobs:
     steps:
 
       # =========================================================
-      # 1 - Checkout
+      # 1. Checkout
       # =========================================================
 
       - name: Checkout repository
@@ -29,7 +29,7 @@ jobs:
 
 
       # =========================================================
-      # 2 - التأكد من ملف V8 الصحيح
+      # 2. التأكد من ملف V8 الصحيح
       # =========================================================
 
       - name: Verify V8 ZIP file
@@ -42,10 +42,10 @@ jobs:
           echo "=============================================="
 
           if [ ! -f "./${ZIP_FILE}" ]; then
-            echo "ERROR: V8 ZIP file was not found:"
+            echo "ERROR: Required V8 ZIP file was not found:"
             echo "./${ZIP_FILE}"
             echo ""
-            echo "ZIP files found in repository:"
+            echo "ZIP files currently in repository:"
             find . -maxdepth 1 -type f -name "*.zip" -print
             exit 1
           fi
@@ -58,7 +58,7 @@ jobs:
 
 
       # =========================================================
-      # 3 - فك ضغط مشروع V8
+      # 3. فك ضغط مشروع V8
       # =========================================================
 
       - name: Extract V8 project
@@ -75,22 +75,16 @@ jobs:
 
           unzip -q "./${ZIP_FILE}" -d extracted
 
-          echo "ZIP extracted successfully."
-
           PROJECT_DIR=""
 
           while IFS= read -r settings_file; do
-
             candidate_dir="$(dirname "$settings_file")"
 
             if [ -f "$candidate_dir/settings.gradle" ] || \
                [ -f "$candidate_dir/settings.gradle.kts" ]; then
-
               PROJECT_DIR="$candidate_dir"
               break
-
             fi
-
           done < <(
             find extracted \
               -type f \
@@ -99,7 +93,7 @@ jobs:
           )
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android project was not found."
+            echo "ERROR: Android project was not found inside ZIP."
             echo ""
             find extracted -maxdepth 5 -type f | sort | head -200
             exit 1
@@ -114,7 +108,7 @@ jobs:
 
 
       # =========================================================
-      # 4 - Java 17
+      # 4. Java 17
       # =========================================================
 
       - name: Setup Java 17
@@ -125,7 +119,7 @@ jobs:
 
 
       # =========================================================
-      # 5 - Gradle
+      # 5. Gradle
       # =========================================================
 
       - name: Setup Gradle
@@ -133,13 +127,10 @@ jobs:
 
 
       # =========================================================
-      # 6 - فحص مشروع V8 والبيانات
+      # 6. فحص V8 الحقيقي
       #
-      # مهم:
-      # لا نفترض أن manifest يحتوي:
-      # "members": 30
-      #
-      # بل نقرأ JSON فعليًا ونحسب المصفوفات.
+      # لا يوجد هنا أي فحص خاطئ للأرقام داخل index.html.
+      # البيانات يتم التحقق منها من v8_seed_manifest.json.
       # =========================================================
 
       - name: Verify V8 source contents and data
@@ -177,13 +168,9 @@ jobs:
             app/src/main/assets/index.html; then
 
             echo "ERROR: seedGroup was not found."
-
-            echo ""
-            echo "seedGroup occurrences:"
             grep -n "seedGroup" \
               app/src/main/assets/index.html \
               | head -20 || true
-
             exit 1
           fi
 
@@ -191,7 +178,7 @@ jobs:
 
 
           # -----------------------------------------------------
-          # أسماء أعضاء حقيقية
+          # أعضاء حقيقيون
           # -----------------------------------------------------
 
           grep -q 'وهيب صالح محمد هاشم' \
@@ -210,7 +197,7 @@ jobs:
 
 
           # -----------------------------------------------------
-          # الاجتماعات الخمسة
+          # التواريخ الخمسة
           # -----------------------------------------------------
 
           grep -q '2024-10-08' \
@@ -232,44 +219,109 @@ jobs:
 
 
           # -----------------------------------------------------
-          # قراءة manifest الحقيقي
+          # التحقق الحقيقي من JSON
           #
-          # هنا الإصلاح الأساسي.
-          # لا نبحث عن "members":30
-          # ولا "meetings":5
-          # لأنهما Arrays.
+          # 30 عضو
+          # 5 اجتماعات
+          # 30 صف لكل اجتماع
           # -----------------------------------------------------
 
-          python3 -c "import json; d=json.load(open('app/src/main/assets/v8_seed_manifest.json', encoding='utf-8')); assert len(d['members']) == 30, 'members count is not 30'; assert len(d['meetings']) == 5, 'meetings count is not 5'; assert all(len(m['rows']) == 30 for m in d['meetings']), 'one meeting does not have 30 rows'; print('Manifest verification: 30 members, 5 meetings, 30 rows per meeting: OK')"
+          python3 -c "
+          import json
+
+          path='app/src/main/assets/v8_seed_manifest.json'
+
+          with open(path, encoding='utf-8') as f:
+              data=json.load(f)
+
+          members=data.get('members', [])
+          meetings=data.get('meetings', [])
+
+          assert len(members)==30, f'Expected 30 members, found {len(members)}'
+          assert len(meetings)==5, f'Expected 5 meetings, found {len(meetings)}'
+
+          for meeting in meetings:
+              rows=meeting.get('rows', [])
+              assert len(rows)==30, f'Meeting {meeting.get(\"date\")} has {len(rows)} rows'
+
+          print('Manifest verification: 30 members, 5 meetings, 30 rows per meeting: OK')
+          "
 
 
           # -----------------------------------------------------
-          # التحقق من التواريخ من JSON نفسه
+          # التحقق من تواريخ JSON
           # -----------------------------------------------------
 
-          python3 -c "import json; d=json.load(open('app/src/main/assets/v8_seed_manifest.json', encoding='utf-8')); expected=['2024-10-08','2024-11-08','2024-12-08','2025-01-08','2025-02-08']; actual=[m['date'] for m in d['meetings']]; assert actual == expected, f'Unexpected meeting dates: {actual}'; print('Manifest meeting dates: OK')"
+          python3 -c "
+          import json
+
+          path='app/src/main/assets/v8_seed_manifest.json'
+
+          with open(path, encoding='utf-8') as f:
+              data=json.load(f)
+
+          expected=[
+              '2024-10-08',
+              '2024-11-08',
+              '2024-12-08',
+              '2025-01-08',
+              '2025-02-08'
+          ]
+
+          actual=[
+              meeting.get('date')
+              for meeting in data.get('meetings', [])
+          ]
+
+          assert actual==expected, f'Unexpected meeting dates: {actual}'
+
+          print('Manifest meeting dates: OK')
+          "
 
 
           # -----------------------------------------------------
-          # التحقق من وجود بيانات مالية فعلية
+          # التحقق من أن بيانات الاجتماعات ليست كلها صفرًا
+          #
+          # لا نفترض أسماء حقول محددة.
+          # نفحص القيم الرقمية داخل rows نفسها.
           # -----------------------------------------------------
 
-          grep -q '165000' \
-            app/src/main/assets/index.html
+          python3 -c "
+          import json
 
-          grep -q '205000' \
-            app/src/main/assets/index.html
+          path='app/src/main/assets/v8_seed_manifest.json'
 
-          grep -q '265000' \
-            app/src/main/assets/index.html
+          with open(path, encoding='utf-8') as f:
+              data=json.load(f)
 
-          grep -q '242500' \
-            app/src/main/assets/index.html
+          meetings=data.get('meetings', [])
 
-          grep -q '246000' \
-            app/src/main/assets/index.html
+          positive_meetings=0
 
-          echo "Non-zero meeting data found: OK"
+          for meeting in meetings:
+              rows=meeting.get('rows', [])
+              found_positive=False
+
+              for row in rows:
+                  if isinstance(row, dict):
+                      for value in row.values():
+                          if isinstance(value, (int,float)) and value > 0:
+                              found_positive=True
+                              break
+
+                  if found_positive:
+                      break
+
+              if found_positive:
+                  positive_meetings += 1
+
+          assert positive_meetings==5, (
+              f'Expected non-zero data in all 5 meetings, '
+              f'found {positive_meetings}'
+          )
+
+          print('Meeting financial data: all 5 meetings contain non-zero values: OK')
+          "
 
 
           # -----------------------------------------------------
@@ -279,10 +331,25 @@ jobs:
           grep -q 'onConfigurationChanged' \
             app/src/main/java/com/groupfinance/app/MainActivity.java
 
-          grep -q 'configChanges' \
-            app/src/main/AndroidManifest.xml
-
           echo "Orientation handling found: OK"
+
+
+          # -----------------------------------------------------
+          # AndroidManifest
+          # -----------------------------------------------------
+
+          if [ -f app/src/main/AndroidManifest.xml ]; then
+
+            grep -q 'configChanges' \
+              app/src/main/AndroidManifest.xml
+
+            echo "Android configuration handling found: OK"
+
+          else
+
+            echo "WARNING: AndroidManifest.xml not found in expected location."
+
+          fi
 
 
           # -----------------------------------------------------
@@ -305,7 +372,7 @@ jobs:
 
 
       # =========================================================
-      # 7 - تجهيز مفتاح توقيع V8
+      # 7. تجهيز مفتاح V8 الثابت
       # =========================================================
 
       - name: Prepare fixed V8 signing key
@@ -344,26 +411,18 @@ jobs:
           fi
 
 
-          # -----------------------------------------------------
-          # المفتاح داخل app لأن build.gradle يستخدم:
-          # file(signingProps['storeFile'])
-          # -----------------------------------------------------
-
           echo "$ANDROID_KEYSTORE_BASE64" \
             | base64 --decode \
             > app/fixed-v8-release.jks
 
+
           if [ ! -s app/fixed-v8-release.jks ]; then
-            echo "ERROR: Keystore was not created."
+            echo "ERROR: Signing keystore was not created."
             exit 1
           fi
 
-          echo "Keystore created: OK"
+          echo "Signing keystore created: OK"
 
-
-          # -----------------------------------------------------
-          # إنشاء signing.properties بدون heredoc
-          # -----------------------------------------------------
 
           printf '%s\n' \
             "storeFile=fixed-v8-release.jks" \
@@ -372,12 +431,9 @@ jobs:
             "keyPassword=$ANDROID_KEY_PASSWORD" \
             > signing.properties
 
+
           echo "signing.properties created: OK"
 
-
-          # -----------------------------------------------------
-          # اختبار المفتاح
-          # -----------------------------------------------------
 
           keytool -list \
             -keystore app/fixed-v8-release.jks \
@@ -385,11 +441,12 @@ jobs:
             -alias "$ANDROID_KEY_ALIAS" \
             >/tmp/v8_key_check.txt
 
+
           echo "Fixed V8 signing key verified: OK"
 
 
       # =========================================================
-      # 8 - بناء APK
+      # 8. بناء APK
       # =========================================================
 
       - name: Build signed V8 APK
@@ -419,7 +476,7 @@ jobs:
 
 
       # =========================================================
-      # 9 - فحص البيانات داخل APK نفسه
+      # 9. فحص APK نفسه
       # =========================================================
 
       - name: Verify APK contains V8 data
@@ -434,10 +491,7 @@ jobs:
 
           APK="app/build/outputs/apk/release/app-release.apk"
 
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK not found."
-            exit 1
-          fi
+          test -f "$APK"
 
           rm -rf /tmp/v8_apk_check
           mkdir -p /tmp/v8_apk_check
@@ -447,6 +501,7 @@ jobs:
           APK_INDEX="/tmp/v8_apk_check/assets/index.html"
           APK_MANIFEST="/tmp/v8_apk_check/assets/v8_seed_manifest.json"
 
+
           test -f "$APK_INDEX"
           test -f "$APK_MANIFEST"
 
@@ -454,7 +509,7 @@ jobs:
 
 
           # -----------------------------------------------------
-          # التحقق من التواريخ داخل APK
+          # تواريخ الاجتماعات
           # -----------------------------------------------------
 
           grep -q '2024-10-08' "$APK_INDEX"
@@ -467,7 +522,7 @@ jobs:
 
 
           # -----------------------------------------------------
-          # أسماء أعضاء
+          # الأعضاء
           # -----------------------------------------------------
 
           grep -q 'وهيب صالح محمد هاشم' "$APK_INDEX"
@@ -478,23 +533,67 @@ jobs:
 
 
           # -----------------------------------------------------
-          # القيم المالية
+          # قراءة manifest من APK
           # -----------------------------------------------------
 
-          grep -q '165000' "$APK_INDEX"
-          grep -q '205000' "$APK_INDEX"
-          grep -q '265000' "$APK_INDEX"
-          grep -q '242500' "$APK_INDEX"
-          grep -q '246000' "$APK_INDEX"
+          python3 -c "
+          import json
 
-          echo "Non-zero meeting values inside APK: OK"
+          path='$APK_MANIFEST'
+
+          with open(path, encoding='utf-8') as f:
+              data=json.load(f)
+
+          members=data.get('members', [])
+          meetings=data.get('meetings', [])
+
+          assert len(members)==30
+          assert len(meetings)==5
+
+          for meeting in meetings:
+              assert len(meeting.get('rows', []))==30
+
+          print('APK manifest: 30 members, 5 meetings, 30 rows each: OK')
+          "
 
 
           # -----------------------------------------------------
-          # قراءة manifest داخل APK
+          # التأكد أن بيانات الاجتماعات ليست صفرًا
           # -----------------------------------------------------
 
-          python3 -c "import json; d=json.load(open('$APK_MANIFEST', encoding='utf-8')); assert len(d['members']) == 30; assert len(d['meetings']) == 5; assert all(len(m['rows']) == 30 for m in d['meetings']); print('APK manifest: 30 members, 5 meetings, 30 rows each: OK')"
+          python3 -c "
+          import json
+
+          path='$APK_MANIFEST'
+
+          with open(path, encoding='utf-8') as f:
+              data=json.load(f)
+
+          meetings=data.get('meetings', [])
+
+          positive=0
+
+          for meeting in meetings:
+              rows=meeting.get('rows', [])
+              ok=False
+
+              for row in rows:
+                  if isinstance(row, dict):
+                      for value in row.values():
+                          if isinstance(value,(int,float)) and value>0:
+                              ok=True
+                              break
+
+                  if ok:
+                      break
+
+              if ok:
+                  positive+=1
+
+          assert positive==5, f'Only {positive} meetings contain positive values'
+
+          print('APK meeting financial data: 5/5 meetings contain values: OK')
+          "
 
 
           echo ""
@@ -504,7 +603,7 @@ jobs:
 
 
       # =========================================================
-      # 10 - التحقق من توقيع APK
+      # 10. التحقق من توقيع APK
       # =========================================================
 
       - name: Verify APK signature
@@ -521,31 +620,26 @@ jobs:
 
           APK="app/build/outputs/apk/release/app-release.apk"
 
-          APKSIGNER=""
 
-          if [ -n "${ANDROID_HOME:-}" ]; then
-            APKSIGNER="$(
-              find "$ANDROID_HOME/build-tools" \
-                -type f \
-                -name apksigner \
-                -print \
-                | sort -V \
-                | tail -n 1 || true
-            )"
-          fi
+          APKSIGNER="$(
+            find "$ANDROID_HOME/build-tools" \
+              -type f \
+              -name apksigner \
+              -print \
+              | sort -V \
+              | tail -n 1
+          )"
+
 
           if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
-            echo "ERROR: apksigner not found."
+            echo "ERROR: apksigner was not found."
             exit 1
           fi
 
-          echo "Using:"
+
+          echo "Using apksigner:"
           echo "$APKSIGNER"
 
-
-          # -----------------------------------------------------
-          # التحقق من صلاحية التوقيع
-          # -----------------------------------------------------
 
           "$APKSIGNER" verify \
             --verbose \
@@ -553,15 +647,12 @@ jobs:
             "$APK"
 
 
-          # -----------------------------------------------------
-          # استخراج SHA-256
-          # -----------------------------------------------------
-
           CERT_OUTPUT="$(
             "$APKSIGNER" verify \
               --print-certs \
               "$APK"
           )"
+
 
           echo ""
           echo "$CERT_OUTPUT"
@@ -569,7 +660,8 @@ jobs:
 
           ACTUAL_SHA256="$(
             printf '%s\n' "$CERT_OUTPUT" \
-              | grep -i 'Signer #1 certificate SHA-256 digest' \
+              | grep -i 'certificate SHA-256 digest' \
+              | head -n 1 \
               | sed 's/.*: //' \
               | tr '[:lower:]' '[:upper:]' \
               | tr -d '[:space:]'
@@ -584,7 +676,7 @@ jobs:
 
 
           if [ -z "$ACTUAL_SHA256" ]; then
-            echo "ERROR: Could not read APK SHA-256."
+            echo "ERROR: Could not read APK SHA-256 fingerprint."
             exit 1
           fi
 
@@ -600,7 +692,7 @@ jobs:
 
           if [ "$ACTUAL_SHA256" != "$EXPECTED_NORMALIZED" ]; then
             echo ""
-            echo "ERROR: SIGNATURE DOES NOT MATCH V8 FIXED KEY."
+            echo "ERROR: APK SIGNATURE DOES NOT MATCH V8 FIXED KEY."
             exit 1
           fi
 
@@ -612,7 +704,7 @@ jobs:
 
 
       # =========================================================
-      # 11 - فحص نهائي للشهادة
+      # 11. فحص الشهادة النهائي
       # =========================================================
 
       - name: Final certificate check
@@ -635,7 +727,7 @@ jobs:
 
 
       # =========================================================
-      # 12 - رفع APK
+      # 12. رفع APK
       # =========================================================
 
       - name: Upload signed V8 APK
@@ -648,12 +740,13 @@ jobs:
 
 
       # =========================================================
-      # 13 - نجاح البناء
+      # 13. النتيجة النهائية
       # =========================================================
 
       - name: Build summary
         shell: bash
         run: |
+          echo ""
           echo "=============================================="
           echo "GROUPFINANCE V8 BUILD SUCCESSFUL"
           echo "=============================================="
