@@ -56,8 +56,6 @@ jobs:
 
       # =========================================================
       # 3. EXTRACT PROJECT
-      #    IMPORTANT:
-      #    No unsafe find command is used here.
       # =========================================================
       - name: Extract V8 project
         shell: bash
@@ -75,23 +73,14 @@ jobs:
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "Extracted files:"
-          ls -la extracted
-
           PROJECT_DIR=""
 
-          # -------------------------------------------------------
-          # Case 1: Android project is directly inside ZIP
-          # -------------------------------------------------------
           if [ -f "extracted/settings.gradle" ]; then
             PROJECT_DIR="extracted"
           elif [ -f "extracted/settings.gradle.kts" ]; then
             PROJECT_DIR="extracted"
           fi
 
-          # -------------------------------------------------------
-          # Case 2: Android project is inside one subdirectory
-          # -------------------------------------------------------
           if [ -z "$PROJECT_DIR" ]; then
             for DIR in extracted/*; do
               if [ -d "$DIR" ]; then
@@ -108,33 +97,24 @@ jobs:
             done
           fi
 
-          # -------------------------------------------------------
-          # Final validation
-          # -------------------------------------------------------
           if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: Android project was not found inside ZIP."
-            echo
-            echo "Extracted project files:"
-            ls -la extracted
-            ls -la extracted/app 2>/dev/null || true
             exit 1
           fi
 
           if [ ! -d "$PROJECT_DIR/app" ]; then
-            echo "ERROR: Android app directory was not found:"
-            echo "$PROJECT_DIR/app"
+            echo "ERROR: Android app directory was not found."
             exit 1
           fi
 
-          echo
-          echo "Android project found successfully:"
+          echo "Android project found:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
 
       # =========================================================
-      # 4. VERIFY REQUIRED SOURCE FILES
+      # 4. VERIFY V8 SOURCE AND DATA
       # =========================================================
       - name: Verify V8 source contents and data
         shell: bash
@@ -144,9 +124,6 @@ jobs:
           echo "=========================================="
           echo "VERIFYING V8 SOURCE CONTENTS"
           echo "=========================================="
-
-          echo "Project directory:"
-          echo "$PROJECT_DIR"
 
           REQUIRED_FILES=(
             "$PROJECT_DIR/settings.gradle"
@@ -167,37 +144,24 @@ jobs:
 
           echo "Required project files: OK"
 
-          # -------------------------------------------------------
-          # seedGroup
-          # -------------------------------------------------------
-          if grep -Fq "const seedGroup={" \
-            "$PROJECT_DIR/app/src/main/assets/index.html"; then
-            echo "seedGroup found: OK"
-          elif grep -Fq "const seedGroup =" \
-            "$PROJECT_DIR/app/src/main/assets/index.html"; then
+          INDEX_HTML="$PROJECT_DIR/app/src/main/assets/index.html"
+          MANIFEST="$PROJECT_DIR/app/src/main/assets/v8_seed_manifest.json"
+
+          if grep -Fq "const seedGroup={" "$INDEX_HTML" ||
+             grep -Fq "const seedGroup =" "$INDEX_HTML"; then
             echo "seedGroup found: OK"
           else
             echo "ERROR: seedGroup was not found."
             exit 1
           fi
 
-          # -------------------------------------------------------
-          # Member data
-          # -------------------------------------------------------
-          MEMBER_COUNT=$(grep -o '"members"' \
-            "$PROJECT_DIR/app/src/main/assets/v8_seed_manifest.json" \
-            | wc -l)
-
-          if [ "$MEMBER_COUNT" -lt 1 ]; then
-            echo "ERROR: Members data was not found in manifest."
+          if grep -Fq '"members"' "$MANIFEST"; then
+            echo "Member data found: OK"
+          else
+            echo "ERROR: Member data was not found."
             exit 1
           fi
 
-          echo "Member data found: OK"
-
-          # -------------------------------------------------------
-          # Required meeting dates
-          # -------------------------------------------------------
           for DATE in \
             "2024-10-08" \
             "2024-11-08" \
@@ -205,8 +169,7 @@ jobs:
             "2025-01-08" \
             "2025-02-08"
           do
-            if ! grep -Fq "$DATE" \
-              "$PROJECT_DIR/app/src/main/assets/v8_seed_manifest.json"; then
+            if ! grep -Fq "$DATE" "$MANIFEST"; then
               echo "ERROR: Required meeting date missing:"
               echo "$DATE"
               exit 1
@@ -215,9 +178,6 @@ jobs:
 
           echo "Five required meeting dates found: OK"
 
-          # -------------------------------------------------------
-          # Verify JSON is valid
-          # -------------------------------------------------------
           python3 -c '
           import json
           import sys
@@ -230,8 +190,8 @@ jobs:
           members = data.get("members", [])
           meetings = data.get("meetings", [])
 
-          print(f"Manifest members: {len(members)}")
-          print(f"Manifest meetings: {len(meetings)}")
+          print("Manifest members:", len(members))
+          print("Manifest meetings:", len(meetings))
 
           if len(members) != 30:
               print("ERROR: Expected exactly 30 members.")
@@ -258,19 +218,23 @@ jobs:
               rows = meeting.get("rows", [])
 
               print(
-                  f"Meeting {date}: "
-                  f"{len(rows)} rows"
+                  "Meeting",
+                  date,
+                  ":",
+                  len(rows),
+                  "rows"
               )
 
               if len(rows) != 30:
                   print(
-                      f"ERROR: Meeting {date} "
-                      f"does not contain 30 rows."
+                      "ERROR: Meeting",
+                      date,
+                      "does not contain 30 rows."
                   )
                   sys.exit(1)
 
           if actual_dates != required_dates:
-              print("ERROR: Meeting dates do not match required V8 dates.")
+              print("ERROR: Meeting dates do not match.")
               print("Actual:", sorted(actual_dates))
               print("Required:", sorted(required_dates))
               sys.exit(1)
@@ -280,11 +244,11 @@ jobs:
               "30 members, 5 meetings, "
               "30 rows per meeting: OK"
           )
-          ' "$PROJECT_DIR/app/src/main/assets/v8_seed_manifest.json"
+          ' "$MANIFEST"
 
 
       # =========================================================
-      # 5. VERIFY ORIENTATION FIX
+      # 5. VERIFY ORIENTATION
       # =========================================================
       - name: Verify orientation and display order fixes
         shell: bash
@@ -292,16 +256,12 @@ jobs:
           set -euo pipefail
 
           MAIN_ACTIVITY="$PROJECT_DIR/app/src/main/java/com/groupfinance/app/MainActivity.java"
+          MANIFEST_XML="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
           INDEX_HTML="$PROJECT_DIR/app/src/main/assets/index.html"
 
           echo "=========================================="
           echo "VERIFYING V8 FIXES"
           echo "=========================================="
-
-          if [ ! -f "$MAIN_ACTIVITY" ]; then
-            echo "ERROR: MainActivity.java not found."
-            exit 1
-          fi
 
           if grep -Fq "onConfigurationChanged" "$MAIN_ACTIVITY"; then
             echo "Orientation handling found: OK"
@@ -310,7 +270,7 @@ jobs:
             exit 1
           fi
 
-          if grep -Fq "configChanges" "$PROJECT_DIR/app/src/main/AndroidManifest.xml"; then
+          if grep -Fq "configChanges" "$MANIFEST_XML"; then
             echo "Android configChanges found: OK"
           else
             echo "ERROR: configChanges was not found."
@@ -406,7 +366,7 @@ jobs:
           ls -lh fixed-v8-release.jks
 
           # -------------------------------------------------------
-          # Verify keystore password
+          # Verify store password
           # -------------------------------------------------------
           if ! keytool \
             -list \
@@ -414,16 +374,14 @@ jobs:
             -storepass "$ANDROID_KEYSTORE_PASSWORD" \
             >/dev/null 2>&1
           then
-            echo "ERROR: V8 KEYSTORE CANNOT BE OPENED."
-            echo "The keystore password does not open the decoded keystore."
+            echo "ERROR: V8 keystore cannot be opened."
             exit 1
           fi
 
           echo "Keystore password verified: OK"
 
           # -------------------------------------------------------
-          # IMPORTANT:
-          # Use verbose output so "Alias name:" is actually present.
+          # Read complete keystore information
           # -------------------------------------------------------
           KEYSTORE_VERBOSE="$(
             keytool \
@@ -433,6 +391,9 @@ jobs:
               -storepass "$ANDROID_KEYSTORE_PASSWORD"
           )"
 
+          # -------------------------------------------------------
+          # Extract aliases WITHOUT grep -q pipelines
+          # -------------------------------------------------------
           ALIAS_LIST="$(
             printf '%s\n' "$KEYSTORE_VERBOSE" \
               | awk -F': ' '/^Alias name:/{print $2}'
@@ -446,14 +407,29 @@ jobs:
           echo "Aliases inside V8 keystore:"
           printf '%s\n' "$ALIAS_LIST"
 
-          if ! printf '%s\n' "$ALIAS_LIST" \
-            | grep -Fxq "$ANDROID_KEY_ALIAS"; then
+          # -------------------------------------------------------
+          # Safe alias comparison
+          # NO grep -q PIPE
+          # -------------------------------------------------------
+          ALIAS_FOUND="false"
+
+          while IFS= read -r ALIAS; do
+            if [ "$ALIAS" = "$ANDROID_KEY_ALIAS" ]; then
+              ALIAS_FOUND="true"
+              break
+            fi
+          done <<< "$ALIAS_LIST"
+
+          if [ "$ALIAS_FOUND" != "true" ]; then
             echo "ERROR: Required V8 alias was not found."
             exit 1
           fi
 
           echo "V8 alias verified: OK"
 
+          # -------------------------------------------------------
+          # Read selected alias
+          # -------------------------------------------------------
           SELECTED_KEY="$(
             keytool \
               -list \
@@ -463,13 +439,19 @@ jobs:
               -alias "$ANDROID_KEY_ALIAS"
           )"
 
-          if ! printf '%s\n' "$SELECTED_KEY" \
-            | grep -Fq "Entry type: PrivateKeyEntry"; then
-            echo "ERROR: V8 alias is not a PrivateKeyEntry."
-            exit 1
-          fi
-
-          echo "PrivateKeyEntry verified: OK"
+          # -------------------------------------------------------
+          # SAFE TEXT TEST
+          # No pipe, no grep -q
+          # -------------------------------------------------------
+          case "$SELECTED_KEY" in
+            *"Entry type: PrivateKeyEntry"*)
+              echo "PrivateKeyEntry verified: OK"
+              ;;
+            *)
+              echo "ERROR: V8 alias is not a PrivateKeyEntry."
+              exit 1
+              ;;
+          esac
 
           # -------------------------------------------------------
           # Create signing.properties
@@ -503,7 +485,7 @@ jobs:
 
 
       # =========================================================
-      # 10. VERIFY APK EXISTS
+      # 10. VERIFY APK
       # =========================================================
       - name: Verify V8 APK exists
         shell: bash
@@ -535,14 +517,16 @@ jobs:
           echo "VERIFYING APK CONTENT"
           echo "=========================================="
 
-          if ! unzip -l "$APK" | grep -Fq "assets/index.html"; then
+          unzip -l "$APK" > apk_contents.txt
+
+          if ! grep -Fq "assets/index.html" apk_contents.txt; then
             echo "ERROR: APK does not contain assets/index.html"
             exit 1
           fi
 
           echo "APK contains index.html: OK"
 
-          if ! unzip -l "$APK" | grep -Fq "assets/v8_seed_manifest.json"; then
+          if ! grep -Fq "assets/v8_seed_manifest.json" apk_contents.txt; then
             echo "ERROR: APK does not contain v8_seed_manifest.json"
             exit 1
           fi
@@ -564,8 +548,15 @@ jobs:
           echo "VERIFYING APK SIGNATURE"
           echo "=========================================="
 
-          "$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner" \
-            verify \
+          BUILD_TOOLS_VERSION="$(
+            ls "$ANDROID_HOME/build-tools" \
+            | sort -V \
+            | tail -1
+          )"
+
+          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+
+          "$APKSIGNER" verify \
             --verbose \
             "$APK"
 
@@ -573,7 +564,7 @@ jobs:
 
 
       # =========================================================
-      # 13. VERIFY APK CERTIFICATE FINGERPRINT
+      # 13. VERIFY FIXED V8 SHA-256
       # =========================================================
       - name: Verify V8 signing certificate
         shell: bash
@@ -585,9 +576,9 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
-
           APK="app/build/outputs/apk/release/app-release.apk"
+
+          EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
 
           echo "=========================================="
           echo "VERIFYING V8 SIGNATURE FINGERPRINT"
@@ -619,7 +610,7 @@ jobs:
 
 
       # =========================================================
-      # 14. UPLOAD FINAL APK
+      # 14. UPLOAD APK
       # =========================================================
       - name: Upload V8 Release APK
         uses: actions/upload-artifact@v4
