@@ -89,7 +89,7 @@ jobs:
           done < <(
             find extracted \
               -type f \
-              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              -name "settings.gradle" -o -name "settings.gradle.kts" \
               -print
           )
 
@@ -418,6 +418,11 @@ jobs:
             exit 1
           fi
 
+          if [ -z "${ANDROID_KEY_ALIAS:-}" ]; then
+            echo "ERROR: ANDROID_KEY_ALIAS is EMPTY."
+            exit 1
+          fi
+
           echo "Required signing secrets are present: OK"
 
 
@@ -436,7 +441,7 @@ jobs:
             exit 1
           fi
 
-          echo "Signing keystore created: OK"
+          echo "Signing keystore decoded: OK"
 
           ls -lh app/fixed-v8-release.jks
 
@@ -464,13 +469,7 @@ jobs:
             echo "ANDROID_KEYSTORE_PASSWORD does not open it."
 
             echo ""
-            echo "Possible causes:"
-            echo "1. ANDROID_KEYSTORE_PASSWORD is incorrect."
-            echo "2. ANDROID_KEYSTORE_BASE64 belongs to another keystore."
-            echo "3. The Base64 secret was copied incorrectly."
-
-            echo ""
-            echo "The password itself is NOT displayed."
+            echo "No password is displayed."
 
             exit 1
           fi
@@ -479,12 +478,34 @@ jobs:
 
 
           # --------------------------------------------------------
+          # GET DETAILED KEYSTORE INFORMATION
+          # IMPORTANT:
+          # -v is required because "Alias name:" appears
+          # in verbose keytool output.
+          # --------------------------------------------------------
+
+          KEYSTORE_VERBOSE="$(
+            keytool -list \
+              -v \
+              -keystore app/fixed-v8-release.jks \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD"
+          )"
+
+          echo "Detailed keystore inspection: OK"
+
+
+          # --------------------------------------------------------
           # FIND ACTUAL ALIASES
           # --------------------------------------------------------
 
           ALIAS_LIST="$(
-            printf '%s\n' "$KEYSTORE_INFO" \
-              | awk -F': ' '/Alias name:/{print $2}'
+            printf '%s\n' "$KEYSTORE_VERBOSE" \
+              | awk -F': ' '/^Alias name:/{print $2}'
+          )"
+
+          ALIAS_LIST="$(
+            printf '%s\n' "$ALIAS_LIST" \
+              | sed '/^[[:space:]]*$/d'
           )"
 
           ALIAS_COUNT="$(
@@ -501,6 +522,11 @@ jobs:
           if [ "$ALIAS_COUNT" -eq 0 ]; then
             echo ""
             echo "ERROR: No key alias was found inside keystore."
+
+            echo ""
+            echo "This indicates the decoded keystore does not"
+            echo "contain a readable key entry."
+
             exit 1
           fi
 
@@ -511,16 +537,12 @@ jobs:
 
           SELECTED_ALIAS=""
 
-          if [ -n "${ANDROID_KEY_ALIAS:-}" ]; then
+          if printf '%s\n' "$ALIAS_LIST" \
+            | grep -Fxq "$ANDROID_KEY_ALIAS"; then
 
-            if printf '%s\n' "$ALIAS_LIST" \
-              | grep -Fxq "$ANDROID_KEY_ALIAS"; then
+            SELECTED_ALIAS="$ANDROID_KEY_ALIAS"
 
-              SELECTED_ALIAS="$ANDROID_KEY_ALIAS"
-
-              echo "Configured V8 alias found: OK"
-
-            fi
+            echo "Configured V8 alias found: OK"
 
           fi
 
@@ -569,6 +591,7 @@ jobs:
           # --------------------------------------------------------
 
           if ! keytool -list \
+            -v \
             -keystore app/fixed-v8-release.jks \
             -storepass "$ANDROID_KEYSTORE_PASSWORD" \
             -alias "$SELECTED_ALIAS" \
@@ -577,10 +600,6 @@ jobs:
 
             echo ""
             echo "ERROR: Selected signing alias could not be opened."
-
-            echo ""
-            echo "This normally means the keystore is valid but"
-            echo "the selected alias/password combination is wrong."
 
             echo ""
             echo "Keystore alias selected:"
@@ -598,6 +617,39 @@ jobs:
 
 
           # --------------------------------------------------------
+          # VERIFY PRIVATE KEY ENTRY
+          # --------------------------------------------------------
+
+          if ! grep -q 'Entry type: PrivateKeyEntry' \
+            /tmp/v8_selected_key.txt; then
+
+            echo ""
+            echo "ERROR: Selected alias is not a PrivateKeyEntry."
+
+            echo ""
+            echo "The selected entry cannot be used as"
+            echo "the Android release signing key."
+
+            exit 1
+          fi
+
+          echo "Private signing key entry verified: OK"
+
+
+          # --------------------------------------------------------
+          # SHOW FINGERPRINT FOR VERIFICATION
+          # --------------------------------------------------------
+
+          echo ""
+          echo "V8 SIGNING CERTIFICATE INFORMATION:"
+
+          grep -E \
+            'Alias name:|Entry type:|SHA256:' \
+            /tmp/v8_selected_key.txt \
+            || true
+
+
+          # --------------------------------------------------------
           # CREATE SIGNING PROPERTIES
           # --------------------------------------------------------
 
@@ -612,7 +664,7 @@ jobs:
 
 
           # --------------------------------------------------------
-          # EXPORT SELECTED ALIAS FOR LATER STEPS
+          # EXPORT SELECTED ALIAS
           # --------------------------------------------------------
 
           echo "V8_SELECTED_ALIAS=$SELECTED_ALIAS" \
@@ -881,63 +933,4 @@ jobs:
 
           echo ""
           echo "=============================================="
-          echo "FIXED V8 SIGNATURE VERIFIED"
-          echo "=============================================="
-
-
-      # ============================================================
-      # 11. FINAL CERTIFICATE CHECK
-      # ============================================================
-      - name: Final certificate check
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="app/build/outputs/apk/release/app-release.apk"
-
-          echo "=============================================="
-          echo "FINAL CERTIFICATE CHECK"
-          echo "=============================================="
-
-          keytool -printcert \
-            -jarfile "$APK"
-
-          echo ""
-          echo "Certificate check completed."
-
-
-      # ============================================================
-      # 12. UPLOAD APK
-      # ============================================================
-      - name: Upload signed V8 APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: GroupFinance-V8-release-signed
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
-          retention-days: 30
-
-
-      # ============================================================
-      # 13. SUMMARY
-      # ============================================================
-      - name: Build summary
-        shell: bash
-        run: |
-          echo ""
-          echo "=============================================="
-          echo "GROUPFINANCE V8 BUILD SUCCESSFUL"
-          echo "=============================================="
-          echo ""
-          echo "30 MEMBERS: VERIFIED"
-          echo "5 MEETINGS: VERIFIED"
-          echo "30 ROWS PER MEETING: VERIFIED"
-          echo "MEETING DATA: VERIFIED"
-          echo "ORIENTATION FIX: VERIFIED"
-          echo "EMERGENCY BEFORE OPERATION: VERIFIED"
-          echo "APK DATA: VERIFIED"
-          echo "V8 SIGNATURE: VERIFIED"
-          echo ""
-          echo "APK IS READY"
-          echo "=============================================="
+         
