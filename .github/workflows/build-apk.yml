@@ -68,12 +68,14 @@ jobs:
           test -f app/src/main/assets/v8_seed_manifest.json
           test -f app/src/main/java/com/groupfinance/app/MainActivity.java
 
-          echo "Checking member/meeting data..."
+          echo "Checking member data..."
 
           grep -q "وهيب صالح محمد هاشم" app/src/main/assets/index.html
           grep -q "محمد عبده الدائم احمد" app/src/main/assets/index.html
           grep -q "رمزي محمد عبد الباقي سعيد" app/src/main/assets/index.html
           grep -q "عفان محمد سالم سعيد" app/src/main/assets/index.html
+
+          echo "Checking five meeting dates..."
 
           grep -q "2024-10-08" app/src/main/assets/index.html
           grep -q "2024-11-08" app/src/main/assets/index.html
@@ -117,7 +119,11 @@ jobs:
             fi
           done
 
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > fixed-v8-release.jks
+          echo "Preparing fixed V8 signing key..."
+
+          mkdir -p app
+
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/fixed-v8-release.jks
 
           cat > signing.properties <<EOF
           storeFile=fixed-v8-release.jks
@@ -126,20 +132,26 @@ jobs:
           keyPassword=$ANDROID_KEY_PASSWORD
           EOF
 
-          chmod 600 fixed-v8-release.jks
+          chmod 600 app/fixed-v8-release.jks
           chmod 600 signing.properties
 
-          echo "Fixed V8 signing key configured successfully."
+          echo "Signing files prepared."
+
+          echo "Checking keystore location:"
+          test -f app/fixed-v8-release.jks
+
+          echo "Keystore exists successfully."
 
       - name: Build signed V8 release APK
         working-directory: ${{ env.PROJECT_DIR }}
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Starting V8 release build..."
+
+          test -f app/fixed-v8-release.jks
+          test -f signing.properties
 
           gradle :app:assembleRelease \
             --stacktrace \
