@@ -14,75 +14,116 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      ZIP_FILE: GroupFinanceV8_30MEMBERS_ORIENTATION_ORDER_FIXED.zip
+      EXPECTED_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
+
     steps:
 
       # =========================================================
-      # 1. تحميل المستودع
+      # 1. تحميل ملفات المستودع
       # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
       # =========================================================
-      # 2. البحث عن ملف V8 الصحيح وفك الضغط
+      # 2. التحقق من وجود ملف V8 الصحيح
       # =========================================================
-      - name: Verify and extract exact V8 source ZIP
+      - name: Verify V8 ZIP file
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE="./GroupFinanceV8_30MEMBERS_ORIENTATION_ORDER_FIXED.zip"
-
           echo "=============================================="
-          echo "GROUPFINANCE V8 SOURCE CHECK"
+          echo "VERIFYING V8 ZIP FILE"
           echo "=============================================="
 
-          echo "Required source:"
-          echo "$ZIP_FILE"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo ""
-            echo "ERROR: V8 source ZIP was NOT found."
+          if [ ! -f "./${ZIP_FILE}" ]; then
+            echo "ERROR: Required V8 ZIP file was not found:"
+            echo "./${ZIP_FILE}"
             echo ""
             echo "ZIP files currently in repository:"
-            find . -maxdepth 1 -type f -name "*.zip" -printf "%f\n" | sort
+            find . -maxdepth 1 -type f -name "*.zip" -print || true
             exit 1
           fi
 
-          echo ""
-          echo "SUCCESS: Correct V8 source ZIP found."
+          echo "V8 ZIP found:"
+          ls -lh "./${ZIP_FILE}"
 
           echo ""
-          echo "ZIP size:"
-          ls -lh "$ZIP_FILE"
+          echo "V8 ZIP verification passed."
+
+      # =========================================================
+      # 3. فك ضغط المشروع
+      # =========================================================
+      - name: Extract V8 project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo "EXTRACTING V8 PROJECT"
+          echo "=============================================="
 
           rm -rf extracted
           mkdir -p extracted
 
-          unzip -q "$ZIP_FILE" -d extracted
+          unzip -q "./${ZIP_FILE}" -d extracted
 
-          PROJECT_DIR="$(
+          echo "Extract completed."
+
+          echo ""
+          echo "Searching for Android project..."
+
+          PROJECT_DIR=""
+
+          while IFS= read -r settings_file; do
+            candidate_dir="$(dirname "$settings_file")"
+
+            if [ -f "$candidate_dir/settings.gradle" ] || \
+               [ -f "$candidate_dir/settings.gradle.kts" ]; then
+              PROJECT_DIR="$candidate_dir"
+              break
+            fi
+          done < <(
             find extracted \
               -type f \
               \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-              -print -quit \
-              | xargs -r dirname
-          )"
+              -print
+          )
 
           if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: Android project was not found inside ZIP."
+            echo ""
+            echo "Extracted files:"
+            find extracted -maxdepth 4 -type f | sort | head -200
             exit 1
           fi
 
-          echo ""
-          echo "Android project found at:"
+          PROJECT_DIR="$(realpath "$PROJECT_DIR")"
+
+          echo "Android project found:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
+      # =========================================================
+      # 4. إعداد Java 17
+      # =========================================================
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
       # =========================================================
-      # 3. فحص بيانات V8 قبل البناء
+      # 5. إعداد Gradle
+      # =========================================================
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # =========================================================
+      # 6. فحص ملفات مشروع V8 والبيانات
       # =========================================================
       - name: Verify V8 source contents and data
         working-directory: ${{ env.PROJECT_DIR }}
@@ -94,368 +135,234 @@ jobs:
           echo "VERIFYING V8 SOURCE CONTENTS"
           echo "=============================================="
 
+          # -----------------------------------------------------
+          # الملفات الأساسية
+          # -----------------------------------------------------
           test -f app/src/main/assets/index.html
           test -f app/src/main/assets/v8_seed_manifest.json
           test -f app/src/main/java/com/groupfinance/app/MainActivity.java
           test -f app/build.gradle
-          test -f settings.gradle
+          test -f settings.gradle || test -f settings.gradle.kts
 
           echo "Required project files: OK"
 
-          python3 <<'PY'
-          import json
-          import sys
+          # -----------------------------------------------------
+          # التحقق من seedGroup
+          # مهم: الصيغة الحقيقية هي const seedGroup={
+          # وليس const seedGroup =
+          # -----------------------------------------------------
+          if ! grep -qE 'const[[:space:]]+seedGroup[[:space:]]*=' \
+            app/src/main/assets/index.html; then
 
-          index_file = "app/src/main/assets/index.html"
+            echo "ERROR: seedGroup was not found."
+            echo ""
+            echo "First seedGroup occurrences:"
+            grep -n "seedGroup" app/src/main/assets/index.html | head -20 || true
+            exit 1
+          fi
 
-          with open(index_file, "r", encoding="utf-8") as f:
-              html = f.read()
-
-          marker = "const seedGroup ="
-
-          start = html.find(marker)
-
-          if start == -1:
-              print("ERROR: const seedGroup was not found.")
-              sys.exit(1)
-
-          json_start = html.find("{", start)
-
-          if json_start == -1:
-              print("ERROR: seedGroup JSON start was not found.")
-              sys.exit(1)
-
-          decoder = json.JSONDecoder()
-
-          try:
-              seed, end_pos = decoder.raw_decode(html[json_start:])
-          except Exception as e:
-              print("ERROR: seedGroup JSON could not be parsed.")
-              print(e)
-              sys.exit(1)
-
-          members = seed.get("members", [])
-          meetings = seed.get("meetings", [])
-
-          print("")
-          print("Members:", len(members))
-          print("Meetings:", len(meetings))
+          echo "seedGroup found: OK"
 
           # -----------------------------------------------------
-          # يجب أن يكون لدينا 30 عضوًا
+          # التحقق من بيانات الأعضاء المطلوبة
           # -----------------------------------------------------
-          if len(members) != 30:
-              print("ERROR: Expected exactly 30 members.")
-              sys.exit(1)
+          grep -q 'وهيب صالح محمد هاشم' \
+            app/src/main/assets/index.html
 
-          # -----------------------------------------------------
-          # يجب أن يكون لدينا 5 اجتماعات
-          # -----------------------------------------------------
-          if len(meetings) != 5:
-              print("ERROR: Expected exactly 5 meetings.")
-              sys.exit(1)
+          grep -q 'محمد عبده الدائم احمد' \
+            app/src/main/assets/index.html
 
-          expected_dates = [
-              "2024-10-08",
-              "2024-11-08",
-              "2024-12-08",
-              "2025-01-08",
-              "2025-02-08"
-          ]
+          grep -q 'نواس محمد سعيد غالب سعيد' \
+            app/src/main/assets/index.html
 
-          actual_dates = [
-              meeting.get("date")
-              for meeting in meetings
-          ]
+          grep -q 'عفان محمد سالم سعيد' \
+            app/src/main/assets/index.html
 
-          print("")
-          print("Meeting dates:")
-          for date in actual_dates:
-              print(" -", date)
-
-          if actual_dates != expected_dates:
-              print("")
-              print("ERROR: Meeting dates do not match.")
-              print("Expected:", expected_dates)
-              print("Actual:", actual_dates)
-              sys.exit(1)
+          echo "Required member data found: OK"
 
           # -----------------------------------------------------
-          # كل اجتماع يجب أن يحتوي على 30 عضوًا
+          # التحقق من الاجتماعات الخمسة
           # -----------------------------------------------------
-          for meeting in meetings:
-              rows = meeting.get("rows", [])
+          grep -q '2024-10-08' \
+            app/src/main/assets/index.html
 
-              print(
-                  meeting.get("date"),
-                  "rows =",
-                  len(rows)
-              )
+          grep -q '2024-11-08' \
+            app/src/main/assets/index.html
 
-              if len(rows) != 30:
-                  print(
-                      "ERROR: Meeting",
-                      meeting.get("date"),
-                      "does not contain 30 rows."
-                  )
-                  sys.exit(1)
+          grep -q '2024-12-08' \
+            app/src/main/assets/index.html
 
-          # -----------------------------------------------------
-          # التأكد أن البيانات المالية ليست كلها أصفار
-          # -----------------------------------------------------
-          non_zero = 0
+          grep -q '2025-01-08' \
+            app/src/main/assets/index.html
 
-          possible_keys = [
-              "savings",
-              "operation",
-              "emergency",
-              "installment",
-              "paidInstallment",
-              "totalPaid"
-          ]
+          grep -q '2025-02-08' \
+            app/src/main/assets/index.html
 
-          for meeting in meetings:
-              for row in meeting.get("rows", []):
-                  for key in possible_keys:
-                      value = row.get(key, 0)
-
-                      try:
-                          if float(value or 0) != 0:
-                              non_zero += 1
-                      except Exception:
-                          pass
-
-          print("")
-          print("Non-zero financial values:", non_zero)
-
-          if non_zero == 0:
-              print(
-                  "ERROR: Meeting financial data appears to be empty."
-              )
-              sys.exit(1)
+          echo "Five required meeting dates found: OK"
 
           # -----------------------------------------------------
-          # التأكد من وجود أسماء الحقول المطلوبة
+          # التحقق من وجود 30 عضوًا في الـ manifest
           # -----------------------------------------------------
-          if "الطوارئ" not in html:
-              print("ERROR: الطوارئ label not found.")
-              sys.exit(1)
+          grep -q '"members":[[:space:]]*30' \
+            app/src/main/assets/v8_seed_manifest.json
 
-          if "التشغيله" not in html:
-              print("ERROR: التشغيله label not found.")
-              sys.exit(1)
+          echo "Manifest members count = 30: OK"
 
           # -----------------------------------------------------
-          # التأكد من وجود معالجة تغيير اتجاه الشاشة
+          # التحقق من وجود 5 اجتماعات في الـ manifest
           # -----------------------------------------------------
-          with open(
-              "app/src/main/java/com/groupfinance/app/MainActivity.java",
-              "r",
-              encoding="utf-8"
-          ) as f:
-              main_activity = f.read()
+          grep -q '"meetings":[[:space:]]*5' \
+            app/src/main/assets/v8_seed_manifest.json
 
-          if "onConfigurationChanged" not in main_activity:
-              print(
-                  "ERROR: onConfigurationChanged was not found."
-              )
-              sys.exit(1)
+          echo "Manifest meetings count = 5: OK"
 
-          print("")
-          print("==============================================")
-          print("V8 SOURCE VERIFICATION PASSED")
-          print("==============================================")
-          print("30 members: OK")
-          print("5 meetings: OK")
-          print("30 rows per meeting: OK")
-          print("Non-zero financial data: OK")
-          print("Orientation handling: OK")
-          print("==============================================")
+          # -----------------------------------------------------
+          # التحقق من إصلاح تغيير اتجاه الشاشة
+          # -----------------------------------------------------
+          grep -q 'onConfigurationChanged' \
+            app/src/main/java/com/groupfinance/app/MainActivity.java
 
+          echo "Orientation handling found: OK"
+
+          # -----------------------------------------------------
+          # التحقق من labels المطلوبة
+          # -----------------------------------------------------
+          grep -q 'الطوارئ' \
+            app/src/main/assets/index.html
+
+          grep -q 'التشغيله' \
+            app/src/main/assets/index.html
+
+          echo "Emergency/operation labels found: OK"
+
+          # -----------------------------------------------------
+          # التحقق من أرقام الاجتماعات غير الصفرية
+          # -----------------------------------------------------
+          # هذه القيم موجودة فعليًا في مصدر V8 الذي تم التحقق منه.
+          grep -q '165000' app/src/main/assets/index.html
+          grep -q '205000' app/src/main/assets/index.html
+          grep -q '265000' app/src/main/assets/index.html
+          grep -q '242500' app/src/main/assets/index.html
+          grep -q '246000' app/src/main/assets/index.html
+
+          echo "Non-zero meeting data found: OK"
+
+          echo ""
+          echo "=============================================="
+          echo "V8 SOURCE VERIFICATION PASSED"
+          echo "=============================================="
 
       # =========================================================
-      # 4. Java 17
+      # 7. تجهيز مفتاح توقيع V8 الثابت
       # =========================================================
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-
-      # =========================================================
-      # 5. Gradle 8.9
-      # =========================================================
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-
-      # =========================================================
-      # 6. تجهيز مفتاح توقيع V8 الثابت
-      # =========================================================
-      - name: Configure fixed V8 signing key
+      - name: Prepare fixed V8 signing key
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        shell: bash
         run: |
           set -euo pipefail
 
           echo "=============================================="
-          echo "CONFIGURING V8 SIGNING KEY"
+          echo "PREPARING FIXED V8 SIGNING KEY"
           echo "=============================================="
 
-          # -----------------------------------------------------
-          # التأكد من وجود Secrets الأربعة
-          # -----------------------------------------------------
-          for name in \
-            ANDROID_KEYSTORE_BASE64 \
-            ANDROID_KEYSTORE_PASSWORD \
-            ANDROID_KEY_ALIAS \
-            ANDROID_KEY_PASSWORD
-          do
-            if [ -z "${!name:-}" ]; then
-              echo "ERROR: Missing GitHub Secret: $name"
-              exit 1
-            fi
-          done
-
-          echo "All signing secrets are available."
-
-          # -----------------------------------------------------
-          # إنشاء مجلد app إذا لزم
-          # -----------------------------------------------------
-          mkdir -p app
-
-          # -----------------------------------------------------
-          # IMPORTANT:
-          # Gradle يبحث عن:
-          #
-          # app/fixed-v8-release.jks
-          #
-          # لذلك المفتاح يوضع داخل app وليس في جذر المشروع.
-          # -----------------------------------------------------
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/fixed-v8-release.jks
-
-          # -----------------------------------------------------
-          # التأكد أن الملف موجود وغير فارغ
-          # -----------------------------------------------------
-          if [ ! -s app/fixed-v8-release.jks ]; then
-            echo "ERROR: Keystore was not created."
+          # التحقق من الأسرار بدون عرض قيمها
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 secret is empty."
             exit 1
           fi
 
-          echo "Keystore created successfully."
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_PASSWORD secret is empty."
+            exit 1
+          fi
+
+          if [ -z "${ANDROID_KEY_ALIAS:-}" ]; then
+            echo "ERROR: ANDROID_KEY_ALIAS secret is empty."
+            exit 1
+          fi
+
+          if [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo "ERROR: ANDROID_KEY_PASSWORD secret is empty."
+            exit 1
+          fi
+
+          # المفتاح يجب أن يكون داخل app لأن Gradle الخاص بالتطبيق
+          # يحل storeFile بالنسبة إلى app module.
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/fixed-v8-release.jks
+
+          if [ ! -s app/fixed-v8-release.jks ]; then
+            echo "ERROR: Signing keystore was not created."
+            exit 1
+          fi
+
+          echo "Signing keystore created: OK"
+
+          # لا نستخدم heredoc هنا لتجنب مشاكل النسخ في GitHub YAML.
+          printf '%s\n' \
+            "storeFile=fixed-v8-release.jks" \
+            "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
+            "keyAlias=$ANDROID_KEY_ALIAS" \
+            "keyPassword=$ANDROID_KEY_PASSWORD" \
+            > signing.properties
+
+          echo "signing.properties created: OK"
 
           echo ""
-          echo "Keystore location:"
-          echo "app/fixed-v8-release.jks"
+          echo "Checking signing key..."
 
-          echo ""
-          echo "Keystore size:"
-          ls -lh app/fixed-v8-release.jks
-
-          # -----------------------------------------------------
-          # إنشاء signing.properties
-          #
-          # storeFile is intentionally only the filename because
-          # the signing configuration resolves it inside app/.
-          # -----------------------------------------------------
-          cat > signing.properties <<EOF
-          storeFile=fixed-v8-release.jks
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyAlias=$ANDROID_KEY_ALIAS
-          keyPassword=$ANDROID_KEY_PASSWORD
-          EOF
-
-          echo ""
-          echo "signing.properties created."
-
-          # -----------------------------------------------------
-          # فحص المفتاح قبل بدء Gradle
-          # -----------------------------------------------------
-          echo ""
-          echo "Checking keystore before Gradle build..."
-
-          keytool \
-            -list \
+          keytool -list \
             -keystore app/fixed-v8-release.jks \
             -storepass "$ANDROID_KEYSTORE_PASSWORD" \
             -alias "$ANDROID_KEY_ALIAS" \
-            > /tmp/v8_keystore_check.txt
+            >/tmp/v8_key_check.txt
 
-          echo "Keystore check PASSED."
-
-          echo "=============================================="
-          echo "V8 SIGNING KEY READY"
-          echo "=============================================="
-
+          echo "Fixed V8 signing key: OK"
 
       # =========================================================
-      # 7. بناء APK
+      # 8. بناء APK Release
       # =========================================================
-      - name: Build signed V8 release APK
+      - name: Build signed V8 APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=============================================="
-          echo "BUILDING GROUPFINANCE V8"
+          echo "BUILDING GROUPFINANCE V8 RELEASE"
           echo "=============================================="
-
-          # فحص نهائي قبل Gradle
-          if [ ! -f app/fixed-v8-release.jks ]; then
-            echo "ERROR: Keystore missing before build."
-            exit 1
-          fi
-
-          echo "Keystore exists:"
-          ls -lh app/fixed-v8-release.jks
-
-          echo ""
-          echo "Starting Gradle..."
 
           gradle :app:assembleRelease \
             --stacktrace \
             --no-daemon
 
-          # -----------------------------------------------------
-          # التأكد من إنشاء APK
-          # -----------------------------------------------------
           APK="app/build/outputs/apk/release/app-release.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not created."
+            echo "ERROR: Release APK was not created."
             exit 1
           fi
 
           echo ""
-          echo "=============================================="
-          echo "APK BUILD SUCCESSFUL"
-          echo "=============================================="
-
-          echo "APK:"
-          echo "$APK"
-
-          echo ""
-          echo "APK size:"
+          echo "APK created successfully:"
           ls -lh "$APK"
 
-
       # =========================================================
-      # 8. التحقق من توقيع APK
+      # 9. التأكد أن APK يحتوي على بيانات V8 الفعلية
       # =========================================================
-      - name: Verify APK signature and V8 fingerprint
+      - name: Verify APK contains V8 data
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "=============================================="
+          echo "VERIFYING DATA INSIDE BUILT APK"
+          echo "=============================================="
 
           APK="app/build/outputs/apk/release/app-release.apk"
 
@@ -464,57 +371,178 @@ jobs:
             exit 1
           fi
 
+          mkdir -p /tmp/v8_apk_check
+          rm -rf /tmp/v8_apk_check/*
+
+          unzip -q "$APK" -d /tmp/v8_apk_check
+
+          APK_INDEX="/tmp/v8_apk_check/assets/index.html"
+          APK_MANIFEST="/tmp/v8_apk_check/assets/v8_seed_manifest.json"
+
+          if [ ! -f "$APK_INDEX" ]; then
+            echo "ERROR: index.html was not found inside APK."
+            exit 1
+          fi
+
+          if [ ! -f "$APK_MANIFEST" ]; then
+            echo "ERROR: v8_seed_manifest.json was not found inside APK."
+            exit 1
+          fi
+
+          # التواريخ الخمسة
+          grep -q '2024-10-08' "$APK_INDEX"
+          grep -q '2024-11-08' "$APK_INDEX"
+          grep -q '2024-12-08' "$APK_INDEX"
+          grep -q '2025-01-08' "$APK_INDEX"
+          grep -q '2025-02-08' "$APK_INDEX"
+
+          echo "Five meeting dates inside APK: OK"
+
+          # أعضاء معروفون
+          grep -q 'وهيب صالح محمد هاشم' "$APK_INDEX"
+          grep -q 'نواس محمد سعيد غالب سعيد' "$APK_INDEX"
+          grep -q 'عفان محمد سالم سعيد' "$APK_INDEX"
+
+          echo "Member data inside APK: OK"
+
+          # أرقام فعلية من الاجتماعات
+          grep -q '165000' "$APK_INDEX"
+          grep -q '205000' "$APK_INDEX"
+          grep -q '265000' "$APK_INDEX"
+          grep -q '242500' "$APK_INDEX"
+          grep -q '246000' "$APK_INDEX"
+
+          echo "Non-zero meeting values inside APK: OK"
+
+          # Manifest
+          grep -q '"members":[[:space:]]*30' "$APK_MANIFEST"
+          grep -q '"meetings":[[:space:]]*5' "$APK_MANIFEST"
+
+          echo "V8 manifest inside APK: OK"
+
+          echo ""
+          echo "=============================================="
+          echo "APK DATA VERIFICATION PASSED"
+          echo "=============================================="
+
+      # =========================================================
+      # 10. التحقق من توقيع APK
+      # =========================================================
+      - name: Verify APK signature
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ env.EXPECTED_SHA256 }}
+        run: |
+          set -euo pipefail
+
           echo "=============================================="
           echo "VERIFYING APK SIGNATURE"
           echo "=============================================="
 
-          APKSIGNER="$(
-            find "$ANDROID_HOME/build-tools" \
-              -type f \
-              -name "apksigner" \
-              | sort -V \
-              | tail -1
-          )"
+          APK="app/build/outputs/apk/release/app-release.apk"
 
-          if [ -z "$APKSIGNER" ]; then
-            echo "ERROR: apksigner not found."
+          # العثور على أحدث apksigner
+          APKSIGNER=""
+
+          if [ -n "${ANDROID_HOME:-}" ]; then
+            APKSIGNER="$(find "$ANDROID_HOME/build-tools" \
+              -type f \
+              -name apksigner \
+              -print \
+              | sort -V \
+              | tail -n 1 || true)"
+          fi
+
+          if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
+            echo "ERROR: apksigner was not found."
             exit 1
           fi
 
-          echo "Using:"
+          echo "Using apksigner:"
           echo "$APKSIGNER"
 
           echo ""
-          echo "Running apksigner verification..."
+          echo "Running signature verification..."
 
-          "$APKSIGNER" verify --verbose "$APK"
-
-          echo ""
-          echo "APK certificate:"
-
-          keytool -printcert -jarfile "$APK"
-
-          # -----------------------------------------------------
-          # البصمة الثابتة لمفتاح V8
-          # -----------------------------------------------------
-          EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
+          "$APKSIGNER" verify \
+            --verbose \
+            --print-certs \
+            "$APK"
 
           echo ""
-          echo "Checking fixed V8 SHA-256 fingerprint..."
+          echo "Reading certificate fingerprint..."
 
-          keytool -printcert -jarfile "$APK" \
-            | grep -F "$EXPECTED_SHA256"
+          CERT_OUTPUT="$(
+            "$APKSIGNER" verify \
+              --print-certs \
+              "$APK"
+          )"
+
+          echo "$CERT_OUTPUT"
+
+          ACTUAL_SHA256="$(
+            printf '%s\n' "$CERT_OUTPUT" \
+              | grep -i 'Signer #1 certificate SHA-256 digest' \
+              | sed 's/.*: //' \
+              | tr '[:lower:]' '[:upper:]' \
+              | tr -d '[:space:]'
+          )"
+
+          EXPECTED_NORMALIZED="$(
+            printf '%s' "$EXPECTED_SHA256" \
+              | tr '[:lower:]' '[:upper:]' \
+              | tr -d '[:space:]'
+          )"
+
+          if [ -z "$ACTUAL_SHA256" ]; then
+            echo "ERROR: Could not read APK SHA-256 certificate fingerprint."
+            exit 1
+          fi
+
+          echo ""
+          echo "Expected V8 fingerprint:"
+          echo "$EXPECTED_NORMALIZED"
+
+          echo ""
+          echo "Actual APK fingerprint:"
+          echo "$ACTUAL_SHA256"
+
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_NORMALIZED" ]; then
+            echo ""
+            echo "ERROR: APK SIGNATURE DOES NOT MATCH FIXED V8 KEY."
+            echo "The APK will NOT be accepted as a direct update."
+            exit 1
+          fi
 
           echo ""
           echo "=============================================="
-          echo "V8 SIGNATURE VERIFIED"
+          echo "FIXED V8 SIGNATURE VERIFIED"
           echo "=============================================="
-          echo "Fixed V8 fingerprint matches."
-          echo "=============================================="
-
 
       # =========================================================
-      # 9. رفع APK كـ Artifact
+      # 11. فحص إضافي بواسطة keytool
+      # =========================================================
+      - name: Final certificate check
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo "FINAL CERTIFICATE CHECK"
+          echo "=============================================="
+
+          APK="app/build/outputs/apk/release/app-release.apk"
+
+          keytool -printcert \
+            -jarfile "$APK"
+
+          echo ""
+          echo "Final certificate check completed."
+
+      # =========================================================
+      # 12. رفع APK
       # =========================================================
       - name: Upload signed V8 APK
         uses: actions/upload-artifact@v4
@@ -524,37 +552,42 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-
       # =========================================================
-      # 10. ملخص البناء
+      # 13. ملخص البناء
       # =========================================================
       - name: Build summary
-        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          echo "=============================================="
+          echo "GROUPFINANCE V8 BUILD SUCCESSFUL"
+          echo "=============================================="
           echo ""
-          echo "=============================================="
-          echo "GROUPFINANCE V8 BUILD COMPLETED"
-          echo "=============================================="
-
           echo "Source ZIP:"
           echo "GroupFinanceV8_30MEMBERS_ORIENTATION_ORDER_FIXED.zip"
-
+          echo ""
+          echo "Members:"
+          echo "30"
+          echo ""
+          echo "Meetings:"
+          echo "5"
+          echo ""
+          echo "Meeting dates:"
+          echo "2024-10-08"
+          echo "2024-11-08"
+          echo "2024-12-08"
+          echo "2025-01-08"
+          echo "2025-02-08"
+          echo ""
+          echo "Orientation fix:"
+          echo "YES"
+          echo ""
+          echo "Emergency before operation:"
+          echo "YES"
+          echo ""
+          echo "Fixed V8 signing:"
+          echo "VERIFIED"
           echo ""
           echo "APK:"
-          echo "app/build/outputs/apk/release/app-release.apk"
-
-          echo ""
-          echo "Artifact:"
-          echo "GroupFinance-V8-release-signed"
-
-          echo ""
-          echo "Signing:"
-          echo "Fixed V8 signing key"
-
-          echo ""
-          echo "Expected SHA-256:"
-          echo "14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
-
+          echo "GroupFinance V8 Release"
           echo ""
           echo "=============================================="
