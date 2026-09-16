@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ============================================================
-      # 2) Verify exact source ZIP
+      # 2) Verify exact V8 source ZIP
       # ============================================================
       - name: Verify V8 source ZIP
         shell: bash
@@ -67,14 +67,12 @@ jobs:
         run: |
           set -e
 
-          if [ -f "extracted/settings.gradle" ]; then
+          if [ -f "extracted/settings.gradle" ] || [ -f "extracted/settings.gradle.kts" ]; then
             PROJECT_DIR="extracted"
-          elif [ -f "extracted/settings.gradle.kts" ]; then
-            PROJECT_DIR="extracted"
-          elif [ -f "extracted/GroupFinance/settings.gradle" ]; then
+
+          elif [ -f "extracted/GroupFinance/settings.gradle" ] || [ -f "extracted/GroupFinance/settings.gradle.kts" ]; then
             PROJECT_DIR="extracted/GroupFinance"
-          elif [ -f "extracted/GroupFinance/settings.gradle.kts" ]; then
-            PROJECT_DIR="extracted/GroupFinance"
+
           else
             echo "ERROR: Android project root was not found."
             exit 1
@@ -82,7 +80,7 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Android project:"
+          echo "Android project root:"
           echo "$PROJECT_DIR"
 
           if [ ! -d "$PROJECT_DIR/app" ]; then
@@ -95,10 +93,15 @@ jobs:
             exit 1
           fi
 
+          if [ ! -f "$PROJECT_DIR/app/src/main/assets/v8_seed_manifest.json" ]; then
+            echo "ERROR: v8_seed_manifest.json was not found."
+            exit 1
+          fi
+
           echo "Required project files: OK"
 
       # ============================================================
-      # 5) Verify V8 source data
+      # 5) Verify V8 source contents
       # ============================================================
       - name: Verify V8 source contents
         shell: bash
@@ -108,9 +111,13 @@ jobs:
           INDEX_HTML="$PROJECT_DIR/app/src/main/assets/index.html"
           MANIFEST="$PROJECT_DIR/app/src/main/assets/v8_seed_manifest.json"
 
+          echo "========================================"
           echo "VERIFYING V8 SOURCE CONTENTS"
+          echo "========================================"
 
-          # ---- seedGroup ----
+          # ----------------------------------------------------------
+          # seedGroup
+          # ----------------------------------------------------------
           if grep -Fq "const seedGroup={" "$INDEX_HTML"; then
             echo "seedGroup found: OK"
           elif grep -Fq "const seedGroup =" "$INDEX_HTML"; then
@@ -120,65 +127,42 @@ jobs:
             exit 1
           fi
 
-          # ---- members ----
-          if grep -Fq "30" "$MANIFEST"; then
-            echo "Member manifest check: OK"
+          # ----------------------------------------------------------
+          # Manifest JSON syntax
+          # ----------------------------------------------------------
+          if jq empty "$MANIFEST" >/dev/null 2>&1; then
+            echo "Manifest JSON syntax: OK"
           else
-            echo "ERROR: V8 manifest does not contain expected member data."
+            echo "ERROR: v8_seed_manifest.json is not valid JSON."
             exit 1
           fi
 
-          # ---- manifest JSON validation ----
-          python3 - "$MANIFEST" <<'PY'
-import json
-import sys
+          # ----------------------------------------------------------
+          # Exact V8 data verification
+          # ----------------------------------------------------------
+          if jq -e '
+            (.members | length) == 30
+            and
+            (.meetings | length) == 5
+            and
+            ([.meetings[].date] | sort) == [
+              "2024-10-08",
+              "2024-11-08",
+              "2024-12-08",
+              "2025-01-08",
+              "2025-02-08"
+            ]
+            and
+            all(.meetings[]; (.rows | length) == 30)
+          ' "$MANIFEST" >/dev/null; then
 
-path = sys.argv[1]
+            echo "Manifest verification: 30 members, 5 meetings, 30 rows per meeting: OK"
+            echo "Manifest meeting dates: OK"
 
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-
-members = data.get("members", [])
-meetings = data.get("meetings", [])
-
-if len(members) != 30:
-    print("ERROR: Expected 30 members, found:", len(members))
-    sys.exit(1)
-
-if len(meetings) != 5:
-    print("ERROR: Expected 5 meetings, found:", len(meetings))
-    sys.exit(1)
-
-required_dates = {
-    "2024-10-08",
-    "2024-11-08",
-    "2024-12-08",
-    "2025-01-08",
-    "2025-02-08",
-}
-
-actual_dates = {str(m.get("date")) for m in meetings}
-
-if actual_dates != required_dates:
-    print("ERROR: Meeting dates do not match expected V8 dates.")
-    print("Actual:", sorted(actual_dates))
-    sys.exit(1)
-
-for meeting in meetings:
-    rows = meeting.get("rows", [])
-    if len(rows) != 30:
-        print(
-            "ERROR: Meeting",
-            meeting.get("date"),
-            "has",
-            len(rows),
-            "rows instead of 30."
-        )
-        sys.exit(1)
-
-print("Manifest verification: 30 members, 5 meetings, 30 rows per meeting: OK")
-print("Manifest meeting dates: OK")
-PY
+          else
+            echo "ERROR: V8 manifest data does not match expected data."
+            exit 1
+          fi
 
       # ============================================================
       # 6) Verify orientation and field order
@@ -189,30 +173,29 @@ PY
           set -e
 
           MAIN_ACTIVITY="$PROJECT_DIR/app/src/main/java/com/groupfinance/app/MainActivity.java"
+          ANDROID_MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
           INDEX_HTML="$PROJECT_DIR/app/src/main/assets/index.html"
 
+          echo "========================================"
           echo "VERIFYING V8 FIXES"
+          echo "========================================"
 
-          if [ ! -f "$MAIN_ACTIVITY" ]; then
-            echo "ERROR: MainActivity.java was not found."
-            exit 1
-          fi
-
+          # Orientation
           if grep -Fq "onConfigurationChanged" "$MAIN_ACTIVITY"; then
-            echo "Orientation handling found: OK"
+            echo "onConfigurationChanged found: OK"
           else
             echo "ERROR: onConfigurationChanged not found."
             exit 1
           fi
 
-          if grep -Fq "android:configChanges" "$PROJECT_DIR/app/src/main/AndroidManifest.xml"; then
-            echo "Android configChanges found: OK"
+          if grep -Fq "android:configChanges" "$ANDROID_MANIFEST"; then
+            echo "android:configChanges found: OK"
           else
             echo "ERROR: android:configChanges not found."
             exit 1
           fi
 
-          # Emergency before operating
+          # Emergency
           if grep -Fq "الطوارئ" "$INDEX_HTML"; then
             echo "Emergency field found: OK"
           else
@@ -220,6 +203,7 @@ PY
             exit 1
           fi
 
+          # Operating
           if grep -Fq "التشغيله" "$INDEX_HTML"; then
             echo "Operating field found: OK"
           else
@@ -230,7 +214,7 @@ PY
           echo "V8 fixes verification: OK"
 
       # ============================================================
-      # 7) Java
+      # 7) Setup Java 17
       # ============================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -239,7 +223,7 @@ PY
           java-version: "17"
 
       # ============================================================
-      # 8) Gradle
+      # 8) Setup Gradle 8.9
       # ============================================================
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -264,7 +248,7 @@ PY
           echo "========================================"
 
           # ----------------------------------------------------------
-          # Secrets presence check
+          # Check secrets
           # ----------------------------------------------------------
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "ERROR: ANDROID_KEYSTORE_BASE64 is empty."
@@ -314,23 +298,16 @@ PY
           then
             echo "Keystore password verified: OK"
           else
-            echo "ERROR: ANDROID_KEYSTORE_PASSWORD does not open the keystore."
+            echo "ERROR: Keystore password is incorrect."
             cat keystore-basic.txt
             exit 1
           fi
 
           # ----------------------------------------------------------
           # IMPORTANT:
-          # DO NOT parse alias list from keytool output.
-          #
-          # GitHub masks secret values in logs. Since the alias itself
-          # is stored as a secret, keytool output may show *** and a
-          # text comparison would falsely report that the alias is
-          # missing.
-          #
-          # Instead, directly open the exact alias from the secret.
+          # Directly open the alias from the secret.
+          # Do not parse the alias list because GitHub masks secrets.
           # ----------------------------------------------------------
-
           rm -f selected-key.txt
 
           if keytool \
@@ -344,31 +321,29 @@ PY
             echo "V8 alias verified: OK"
           else
             echo "ERROR: The configured V8 alias could not be opened."
-            echo "Check that ANDROID_KEY_ALIAS matches the backup key."
             cat selected-key.txt
             exit 1
           fi
 
           # ----------------------------------------------------------
-          # Verify PrivateKeyEntry
+          # Verify key type
           # ----------------------------------------------------------
           if grep -Fq "Entry type: PrivateKeyEntry" selected-key.txt; then
             echo "PrivateKeyEntry verified: OK"
           else
             echo "ERROR: V8 alias is not a PrivateKeyEntry."
-            cat selected-key.txt
             exit 1
           fi
 
           # ----------------------------------------------------------
-          # Verify public certificate fingerprint
+          # Verify fixed V8 certificate
           # ----------------------------------------------------------
           EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
 
           if grep -Fq "$EXPECTED_SHA256" selected-key.txt; then
             echo "V8 SHA-256 fingerprint verified: OK"
           else
-            echo "ERROR: V8 signing certificate fingerprint does not match."
+            echo "ERROR: V8 certificate fingerprint does not match."
             exit 1
           fi
 
@@ -376,16 +351,16 @@ PY
           # Create signing.properties
           # ----------------------------------------------------------
           cat > "$PROJECT_DIR/signing.properties" <<EOF
-          storeFile=$GITHUB_WORKSPACE/fixed-v8-release.jks
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyAlias=$ANDROID_KEY_ALIAS
-          keyPassword=$ANDROID_KEY_PASSWORD
-          EOF
+storeFile=$GITHUB_WORKSPACE/fixed-v8-release.jks
+storePassword=$ANDROID_KEYSTORE_PASSWORD
+keyAlias=$ANDROID_KEY_ALIAS
+keyPassword=$ANDROID_KEY_PASSWORD
+EOF
 
           echo "Signing properties created: OK"
 
       # ============================================================
-      # 10) Build
+      # 10) Build signed V8 APK
       # ============================================================
       - name: Build signed V8 APK
         shell: bash
@@ -433,14 +408,14 @@ PY
           if grep -Fq "assets/index.html" apk-contents.txt; then
             echo "APK index.html: OK"
           else
-            echo "ERROR: APK does not contain assets/index.html"
+            echo "ERROR: APK does not contain assets/index.html."
             exit 1
           fi
 
           if grep -Fq "assets/v8_seed_manifest.json" apk-contents.txt; then
             echo "APK V8 manifest: OK"
           else
-            echo "ERROR: APK does not contain assets/v8_seed_manifest.json"
+            echo "ERROR: APK does not contain assets/v8_seed_manifest.json."
             exit 1
           fi
 
@@ -483,7 +458,7 @@ PY
           echo "APK signature verification: OK"
 
       # ============================================================
-      # 14) Verify final V8 signing certificate
+      # 14) Verify final V8 certificate
       # ============================================================
       - name: Verify V8 signing certificate
         shell: bash
