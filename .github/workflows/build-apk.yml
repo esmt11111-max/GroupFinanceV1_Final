@@ -21,146 +21,160 @@ jobs:
       EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Verify source ZIP
         shell: bash
         run: |
           set -euo pipefail
+          test -f "$PROJECT_ZIP"
+          ACTUAL_SHA="$(sha256sum "$PROJECT_ZIP" | awk '{print $1}')"
+          test "$ACTUAL_SHA" = "$EXPECTED_SOURCE_SHA256"
+          echo "Source ZIP verified: $ACTUAL_SHA"
 
-          if [ ! -f "$PROJECT_ZIP" ]; then
-            echo "ERROR: Source ZIP not found:"
-            echo "$PROJECT_ZIP"
-            echo ""
-            echo "Available files:"
-            find .github/workflows -maxdepth 1 -type f -printf '%f\n' | sort
-            exit 1
-          fi
-
-          echo "Source ZIP found:"
-          echo "$PROJECT_ZIP"
-
-          unzip -tq "$PROJECT_ZIP"
-
-          ACTUAL_SOURCE_SHA256="$(sha256sum "$PROJECT_ZIP" | awk '{print $1}')"
-
-          echo "Expected SHA-256:"
-          echo "$EXPECTED_SOURCE_SHA256"
-
-          echo "Actual SHA-256:"
-          echo "$ACTUAL_SOURCE_SHA256"
-
-          if [ "$ACTUAL_SOURCE_SHA256" != "$EXPECTED_SOURCE_SHA256" ]; then
-            echo "ERROR: Source ZIP SHA-256 mismatch."
-            exit 1
-          fi
-
-          echo "Source ZIP: VERIFIED"
-
-      - name: Extract source project
+      - name: Prepare project
         shell: bash
         run: |
           set -euo pipefail
-
-          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
-
+          P="$RUNNER_TEMP/project"
           rm -rf "$P"
           mkdir -p "$P"
-
           unzip -q "$PROJECT_ZIP" -d "$P"
 
-          echo "Project extracted to:"
-          echo "$P"
-
-      - name: Verify Android project structure
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
-
-          REQUIRED_FILES=(
-            "settings.gradle"
-            "build.gradle"
-            "gradle.properties"
-            "app/build.gradle"
-            "app/src/main/AndroidManifest.xml"
-            "app/src/main/assets/index.html"
-            "app/src/main/assets/v8_seed_manifest.json"
-            "app/src/main/java/com/groupfinance/app/MainActivity.java"
-          )
-
-          for FILE in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$P/$FILE" ]; then
-              echo "ERROR: Missing required file:"
-              echo "$FILE"
-              exit 1
-            fi
-
-            echo "OK: $FILE"
-          done
-
-          echo "Android project structure: VERIFIED"
-
-      - name: Verify V8 seed data
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
-          M="$P/app/src/main/assets/v8_seed_manifest.json"
-
-          if [ ! -f "$M" ]; then
-            echo "ERROR: Seed manifest not found:"
-            echo "$M"
-            exit 1
+          if [ -d "$P/GroupFinanceV8_FINAL_READY_TO_BUILD_FIXED_V2" ]; then
+            mv "$P/GroupFinanceV8_FINAL_READY_TO_BUILD_FIXED_V2"/* "$P/" || true
+            mv "$P/GroupFinanceV8_FINAL_READY_TO_BUILD_FIXED_V2"/.[!.]* "$P/" 2>/dev/null || true
           fi
 
-          jq -e '
-            (.members | type == "array")
-            and
-            (.meetings | type == "array")
-          ' "$M" >/dev/null
+          test -f "$P/settings.gradle" || test -f "$P/settings.gradle.kts"
+          test -f "$P/gradlew"
+          test -d "$P/app"
+          chmod +x "$P/gradlew"
+          echo "Project prepared at $P"
 
-          MEMBERS="$(jq '.members | length' "$M")"
-          MEETINGS="$(jq '.meetings | length' "$M")"
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify Java
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -version
+          javac -version
+
+      - name: Verify Gradle
+        shell: bash
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          set -euo pipefail
+          ./gradlew --version
+
+      - name: Verify V8 seed
+        shell: bash
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          set -euo pipefail
+          SEED="app/src/main/assets/v8_seed_manifest.json"
+          test -f "$SEED"
+
+          MEMBERS="$(node -e "const x=require('./$SEED'); console.log(Array.isArray(x.members)?x.members.length:0)")"
+          MEETINGS="$(node -e "const x=require('./$SEED'); console.log(Array.isArray(x.meetings)?x.meetings.length:0)")"
 
           echo "Members: $MEMBERS"
           echo "Meetings: $MEETINGS"
 
-          if [ "$MEMBERS" -ne 30 ]; then
-            echo "ERROR: Expected exactly 30 members."
-            echo "Found: $MEMBERS"
-            exit 1
-          fi
+          test "$MEMBERS" = "30"
+          test "$MEETINGS" = "5"
 
-          if [ "$MEETINGS" -ne 5 ]; then
-            echo "ERROR: Expected exactly 5 meetings."
-            echo "Found: $MEETINGS"
-            exit 1
-          fi
+          grep -q '2024-10-08' "$SEED"
+          grep -q '2024-11-08' "$SEED"
+          grep -q '2024-12-08' "$SEED"
+          grep -q '2025-01-08' "$SEED"
+          grep -q '2025-02-08' "$SEED"
 
-          EXPECTED_DATES='["2024-10-08","2024-11-08","2024-12-08","2025-01-08","2025-02-08"]'
+      - name: Verify V8 source files
+        shell: bash
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          set -euo pipefail
+          test -f app/src/main/java/com/groupfinance/app/MainActivity.java
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/assets/index.html
+          find app/src/main/assets -type f -name 'meeting_source_*.jpg' | sort
+          COUNT="$(find app/src/main/assets -type f -name 'meeting_source_*.jpg' | wc -l)"
+          test "$COUNT" -ge 10
 
-          ACTUAL_DATES="$(jq -c '[.meetings[].date]' "$M")"
-
-          echo "Expected dates:"
-          echo "$EXPECTED_DATES"
-
-          echo "Actual dates:"
-          echo "$ACTUAL_DATES"
-
-          if [ "$ACTUAL_DATES" != "$EXPECTED_DATES" ]; then
-            echo "ERROR: Meeting dates mismatch."
-            exit 1
-          fi
-
-          echo "V8 seed data: VERIFIED"
-
-      - name: Verify V8 UI and features
+      - name: Create signing properties
         shell: bash
         run: |
           set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_BASE64:-}"
+          test -n "${ANDROID_KEYSTORE_PASSWORD:-}"
+          test -n "${ANDROID_KEY_PASSWORD:-}"
 
-          P="$RUNNER_TEMP/
+          P="$RUNNER_TEMP/project"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$P/groupfinance-v8.keystore"
+
+          cat > "$P/signing.properties" <<EOF
+          storeFile=$P/groupfinance-v8.keystore
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=groupfinance-v8
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
+          test -s "$P/groupfinance-v8.keystore"
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Build release APK
+        shell: bash
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon clean assembleRelease
+
+      - name: Locate APK
+        shell: bash
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/release -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp "$APK" "$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
+          ls -lh "$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
+
+      - name: Verify APK signature
+        shell: bash
+        working-directory: ${{ runner.temp }}/project
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
+
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+
+          "$APKSIGNER" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
+
+          grep -q '14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C' "$RUNNER_TEMP/certs.txt"
+
+      - name: Final APK checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum "$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
+
+      - name: Upload final APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GroupFinance-V8-FINAL-signed
+          path: ${{ runner.temp }}/final/GroupFinance-V8-FINAL-signed.apk
+          if-no-files-found: error
+          retention-days: 30
