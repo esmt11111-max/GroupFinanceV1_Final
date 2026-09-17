@@ -24,15 +24,9 @@ jobs:
 
     steps:
 
-      # =========================================================
-      # 1. تنزيل المستودع
-      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # =========================================================
-      # 2. التحقق من وجود ZIP وصحته
-      # =========================================================
       - name: Verify source ZIP
         shell: bash
         run: |
@@ -42,7 +36,7 @@ jobs:
             echo "ERROR: Source ZIP not found:"
             echo "$PROJECT_ZIP"
             echo ""
-            echo "Files currently in .github/workflows:"
+            echo "Available files:"
             find .github/workflows -maxdepth 1 -type f -printf '%f\n' | sort
             exit 1
           fi
@@ -50,28 +44,23 @@ jobs:
           echo "Source ZIP found:"
           echo "$PROJECT_ZIP"
 
-          echo "Testing ZIP integrity..."
           unzip -tq "$PROJECT_ZIP"
 
           ACTUAL_SOURCE_SHA256="$(sha256sum "$PROJECT_ZIP" | awk '{print $1}')"
 
-          echo "Expected source SHA-256:"
+          echo "Expected SHA-256:"
           echo "$EXPECTED_SOURCE_SHA256"
 
-          echo "Actual source SHA-256:"
+          echo "Actual SHA-256:"
           echo "$ACTUAL_SOURCE_SHA256"
 
           if [ "$ACTUAL_SOURCE_SHA256" != "$EXPECTED_SOURCE_SHA256" ]; then
-            echo "ERROR: WRONG SOURCE ZIP."
-            echo "The ZIP exists, but it is not the verified V8 FIXED V2 source."
+            echo "ERROR: Source ZIP SHA-256 mismatch."
             exit 1
           fi
 
-          echo "ZIP integrity and source identity: VERIFIED"
+          echo "Source ZIP: VERIFIED"
 
-      # =========================================================
-      # 3. فك ضغط المشروع
-      # =========================================================
       - name: Extract source project
         shell: bash
         run: |
@@ -84,15 +73,9 @@ jobs:
 
           unzip -q "$PROJECT_ZIP" -d "$P"
 
-          echo "Extracted project:"
+          echo "Project extracted to:"
           echo "$P"
 
-          echo "Top-level files:"
-          find "$P" -maxdepth 2 -type f | sort
-
-      # =========================================================
-      # 4. التأكد من بنية مشروع Android
-      # =========================================================
       - name: Verify Android project structure
         shell: bash
         run: |
@@ -123,9 +106,6 @@ jobs:
 
           echo "Android project structure: VERIFIED"
 
-      # =========================================================
-      # 5. التحقق من بيانات V8
-      # =========================================================
       - name: Verify V8 seed data
         shell: bash
         run: |
@@ -133,6 +113,12 @@ jobs:
 
           P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
           M="$P/app/src/main/assets/v8_seed_manifest.json"
+
+          if [ ! -f "$M" ]; then
+            echo "ERROR: Seed manifest not found:"
+            echo "$M"
+            exit 1
+          fi
 
           jq -e '
             (.members | type == "array")
@@ -149,3 +135,418 @@ jobs:
           if [ "$MEMBERS" -ne 30 ]; then
             echo "ERROR: Expected exactly 30 members."
             echo "Found: $MEMBERS"
+            exit 1
+          fi
+
+          if [ "$MEETINGS" -ne 5 ]; then
+            echo "ERROR: Expected exactly 5 meetings."
+            echo "Found: $MEETINGS"
+            exit 1
+          fi
+
+          EXPECTED_DATES='["2024-10-08","2024-11-08","2024-12-08","2025-01-08","2025-02-08"]'
+
+          ACTUAL_DATES="$(jq -c '[.meetings[].date]' "$M")"
+
+          echo "Expected dates:"
+          echo "$EXPECTED_DATES"
+
+          echo "Actual dates:"
+          echo "$ACTUAL_DATES"
+
+          if [ "$ACTUAL_DATES" != "$EXPECTED_DATES" ]; then
+            echo "ERROR: Meeting dates mismatch."
+            exit 1
+          fi
+
+          echo "V8 seed data: VERIFIED"
+
+      - name: Verify V8 UI and features
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
+          H="$P/app/src/main/assets/index.html"
+
+          require_text() {
+            local LABEL="$1"
+            shift
+
+            for TEXT in "$@"; do
+              if grep -Fq -- "$TEXT" "$H"; then
+                echo "OK: $LABEL"
+                return 0
+              fi
+            done
+
+            echo "ERROR: Required feature not found: $LABEL"
+            exit 1
+          }
+
+          require_text "Main title" \
+            "النظام المالي للمجموعات"
+
+          require_text "Group name" \
+            "أدارة مجموعة التعاون-النسخة الرابعة" \
+            "أدارة مجموعة التعاون - النسخة الرابعة"
+
+          require_text "Accuracy card" \
+            "دقة في الأرقام"
+
+          require_text "Reports card" \
+            "وضوح في التقارير"
+
+          require_text "Cooperation card" \
+            "تعاون يصنع القوة"
+
+          require_text "Savings" \
+            "المدخرات"
+
+          require_text "Operating" \
+            "التشغيله" \
+            "التشغيلية"
+
+          require_text "Emergency" \
+            "الطوارئ"
+
+          require_text "Financing" \
+            "التمويلات"
+
+          require_text "Backup format" \
+            "GroupFinance-GFBACK"
+
+          require_text "Export" \
+            "function exportData"
+
+          require_text "Import" \
+            "function importData"
+
+          require_text "Android backup" \
+            "Android.saveBackup"
+
+          require_text "Withdrawal date" \
+            "تاريخ الانسحاب"
+
+          require_text "Withdrawal reason" \
+            "سبب الانسحاب"
+
+          require_text "Withdrawn status" \
+            "منسحب"
+
+          require_text "Project name" \
+            "اسم المشروع"
+
+          require_text "Guarantor" \
+            "الضامن"
+
+          require_text "Financing source" \
+            "صندوق المجموعة (صندوق إجمالي المدخرات)"
+
+          echo "V8 UI and features: VERIFIED"
+
+      - name: Verify meeting source images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY/app/src/main/assets/meeting_sources"
+
+          for I in 1 2 3 4 5 6 7 8 9 10; do
+            FILE="$P/meeting_source_${I}.jpg"
+
+            if [ ! -s "$FILE" ]; then
+              echo "ERROR: Missing meeting image:"
+              echo "$FILE"
+              exit 1
+            fi
+
+            echo "OK: meeting_source_${I}.jpg"
+          done
+
+          echo "All meeting source images: VERIFIED"
+
+      - name: Verify JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
+          H="$P/app/src/main/assets/index.html"
+
+          node - "$H" <<'NODE'
+          const fs = require('fs');
+
+          const file = process.argv[2];
+
+          if (!file) {
+            throw new Error('HTML file path was not provided');
+          }
+
+          const html = fs.readFileSync(file, 'utf8');
+
+          const scripts = [
+            ...html.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)
+          ]
+            .map(m => m[1])
+            .filter(x => x.trim());
+
+          if (!scripts.length) {
+            throw new Error('No JavaScript found');
+          }
+
+          scripts.forEach((code, index) => {
+            try {
+              new Function(code);
+            } catch (error) {
+              throw new Error(
+                `JavaScript syntax error in script ${index + 1}: ${error.message}`
+              );
+            }
+          });
+
+          const required = [
+            'val',
+            'num',
+            'modal',
+            'closeModal',
+            'memberSavings',
+            'dueForMember',
+            'activeLoanForMember',
+            'loanSchedule',
+            'renderDashboard',
+            'renderMeetings',
+            'renderMembers',
+            'newMeeting',
+            'saveMeeting',
+            'openMeeting',
+            'openMember',
+            'addMember',
+            'editMember',
+            'addWithdrawal',
+            'addEmergencyAssistance',
+            'showLoanSchedule',
+            'exportData',
+            'importData',
+            'withdrawMember',
+            'editMeeting',
+            'restoreDeleted'
+          ];
+
+          const defs = new Set();
+
+          for (
+            const match of html.matchAll(
+              /(?:function|async function)\s+([A-Za-z_$][\w$]*)/g
+            )
+          ) {
+            defs.add(match[1]);
+          }
+
+          for (
+            const match of html.matchAll(
+              /window\.([A-Za-z_$][\w$]*)\s*=/g
+            )
+          ) {
+            defs.add(match[1]);
+          }
+
+          const missing = required.filter(name => !defs.has(name));
+
+          if (missing.length) {
+            throw new Error(
+              'Missing required V8 functions: ' + missing.join(', ')
+            );
+          }
+
+          console.log(
+            `JavaScript syntax and functions: VERIFIED (${scripts.length} script block(s))`
+          );
+          NODE
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Prepare fixed V8 signing key
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
+          KS="$P/fixed-v8-release.jks"
+
+          if [ -z "$KS_B64" ]; then
+            echo "ERROR: Missing ANDROID_KEYSTORE_BASE64"
+            exit 1
+          fi
+
+          if [ -z "$KS_PASSWORD" ]; then
+            echo "ERROR: Missing ANDROID_KEYSTORE_PASSWORD"
+            exit 1
+          fi
+
+          if [ -z "$KEY_PASSWORD" ]; then
+            echo "ERROR: Missing ANDROID_KEY_PASSWORD"
+            exit 1
+          fi
+
+          printf '%s' "$KS_B64" | base64 --decode > "$KS"
+
+          if [ ! -s "$KS" ]; then
+            echo "ERROR: Keystore is empty"
+            exit 1
+          fi
+
+          keytool \
+            -list \
+            -keystore "$KS" \
+            -storepass "$KS_PASSWORD" \
+            >/dev/null
+
+          ENTRY_TYPE="$(
+            keytool \
+              -list \
+              -v \
+              -keystore "$KS" \
+              -storepass "$KS_PASSWORD" \
+              -alias groupfinance-v8 |
+              awk -F': ' '/Entry type:/{print $2; exit}'
+          )"
+
+          echo "Signing entry type: $ENTRY_TYPE"
+
+          if [ "$ENTRY_TYPE" != "PrivateKeyEntry" ]; then
+            echo "ERROR: groupfinance-v8 is not a PrivateKeyEntry"
+            exit 1
+          fi
+
+          cat > "$P/signing.properties" <<EOF
+storeFile=$KS
+storePassword=$KS_PASSWORD
+keyAlias=groupfinance-v8
+keyPassword=$KEY_PASSWORD
+EOF
+
+          chmod 600 "$KS"
+          chmod 600 "$P/signing.properties"
+
+          echo "Fixed V8 signing key: VERIFIED"
+
+      - name: Build release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
+
+          cd "$P"
+
+          echo "Gradle version:"
+          gradle --version
+
+          echo "Starting Release build..."
+
+          gradle \
+            --no-daemon \
+            --stacktrace \
+            :app:clean \
+            :app:assembleRelease
+
+          APK="$P/app/build/outputs/apk/release/app-release.apk"
+
+          if [ ! -s "$APK" ]; then
+            echo "ERROR: Release APK was not created"
+            exit 1
+          fi
+
+          echo "Release APK: VERIFIED"
+          ls -lh "$APK"
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
+          APK="$P/app/build/outputs/apk/release/app-release.apk"
+
+          APKSIGNER="$(
+            find "$ANDROID_HOME/build-tools" \
+              -type f \
+              -name apksigner \
+              | sort -V \
+              | tail -1
+          )"
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "ERROR: apksigner not found"
+            exit 1
+          fi
+
+          echo "Using:"
+          echo "$APKSIGNER"
+
+          "$APKSIGNER" \
+            verify \
+            --verbose \
+            --print-certs \
+            "$APK"
+
+          keytool \
+            -printcert \
+            -jarfile "$APK" \
+            > "$RUNNER_TEMP/apk-cert.txt"
+
+          echo "APK certificate:"
+          cat "$RUNNER_TEMP/apk-cert.txt"
+
+          if ! grep -Fq "$EXPECTED_CERT_SHA256" "$RUNNER_TEMP/apk-cert.txt"; then
+            echo "ERROR: APK certificate fingerprint mismatch"
+            echo "Expected:"
+            echo "$EXPECTED_CERT_SHA256"
+            exit 1
+          fi
+
+          echo "APK signature and V8 identity: VERIFIED"
+
+      - name: Package final artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          P="$RUNNER_TEMP/GroupFinanceV8_FINAL_READY"
+          FINAL="$RUNNER_TEMP/final"
+
+          rm -rf "$FINAL"
+          mkdir -p "$FINAL"
+
+          cp \
+            "$P/app/build/outputs/apk/release/app-release.apk" \
+            "$FINAL/GroupFinance-V8-FINAL-signed.apk"
+
+          sha256sum \
+            "$FINAL/GroupFinance-V8-FINAL-signed.apk" \
+            > "$FINAL/SHA256.txt"
+
+          echo "Final artifact:"
+          ls -lh "$FINAL"
+
+      - name: Upload final APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GroupFinance-V8-FINAL-signed
+          path: ${{ runner.temp }}/final/
+          if-no-files-found: error
+          retention-days: 30
