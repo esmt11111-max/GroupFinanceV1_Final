@@ -1,38 +1,142 @@
-      - name: Prepare fixed V8 signing key
+name: Build GroupFinance V8 Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract V8 source ZIP
         shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE="./GroupFinanceV8_30MEMBERS_ORIENTATION_ORDER_FIXED.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: Required V8 source ZIP not found:"
+            echo "$ZIP_FILE"
+            exit 1
+          fi
+
+          echo "Using V8 source ZIP:"
+          echo "$ZIP_FILE"
+
+          rm -rf extracted
+          mkdir -p extracted
+
+          unzip -q "$ZIP_FILE" -d extracted
+
+          PROJECT_DIR="$(find extracted -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit | xargs -r dirname)"
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Android project was not found inside the V8 ZIP."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "ERROR: app/build.gradle was not found."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/src/main/assets/index.html" ]; then
+            echo "ERROR: index.html was not found."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/src/main/assets/v8_seed_manifest.json" ]; then
+            echo "ERROR: v8_seed_manifest.json was not found."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "V8 Android project found:"
+          echo "$PROJECT_DIR"
+
+      - name: Verify V8 source data
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "VERIFYING V8 SOURCE DATA"
+          echo "========================"
+
+          test -f "app/src/main/assets/index.html"
+          test -f "app/src/main/assets/v8_seed_manifest.json"
+
+          python3 -c "import json; p='app/src/main/assets/v8_seed_manifest.json'; d=json.load(open(p,encoding='utf-8')); assert len(d.get('members',[])) == 30; assert len(d.get('meetings',[])) == 5; assert all(len(m.get('rows',[])) == 30 for m in d['meetings']); print('Manifest: 30 members, 5 meetings, 30 rows per meeting: OK')"
+
+          python3 -c "import json; p='app/src/main/assets/v8_seed_manifest.json'; d=json.load(open(p,encoding='utf-8')); dates=[m.get('date') for m in d['meetings']]; expected=['2024-10-08','2024-11-08','2024-12-08','2025-01-08','2025-02-08']; assert dates == expected, (dates, expected); print('Meeting dates: OK')"
+
+          if ! grep -Fq "const seedGroup={" "app/src/main/assets/index.html"; then
+            echo "ERROR: Embedded seedGroup was not found in index.html."
+            exit 1
+          fi
+
+          echo "Embedded seedGroup: OK"
+          echo "V8 source verification: OK"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Prepare fixed V8 signing key
+        working-directory: ${{ env.PROJECT_DIR }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "========================================"
           echo "PREPARING FIXED V8 SIGNING KEY"
-          echo "========================================"
+          echo "=============================="
 
-          # Fixed V8 alias verified from the original V8 keystore backup.
+          # This alias is fixed and was verified from the original V8 keystore.
           V8_ALIAS="groupfinance-v8"
 
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
             echo "ERROR: ANDROID_KEYSTORE_BASE64 is empty."
             exit 1
           fi
 
-          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
             echo "ERROR: ANDROID_KEYSTORE_PASSWORD is empty."
             exit 1
           fi
 
-          if [ -z "$ANDROID_KEY_PASSWORD" ]; then
+          if [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
             echo "ERROR: ANDROID_KEY_PASSWORD is empty."
             exit 1
           fi
 
           echo "Required signing secrets are present: OK"
-          echo "Fixed V8 alias configured: OK"
+          echo "Fixed V8 alias: $V8_ALIAS"
 
           rm -f fixed-v8-release.jks
+          rm -f signing.properties
 
           printf '%s' "$ANDROID_KEYSTORE_BASE64" \
             | base64 --decode > fixed-v8-release.jks
@@ -44,29 +148,25 @@
 
           echo "Signing keystore created: OK"
 
-          # Verify keystore password
           if keytool \
-            -list \
-            -keystore fixed-v8-release.jks \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-            > keystore-basic.txt 2>&1
-          then
+              -list \
+              -keystore fixed-v8-release.jks \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              > keystore-basic.txt 2>&1; then
             echo "Keystore password verified: OK"
           else
-            echo "ERROR: Keystore password is incorrect."
+            echo "ERROR: Keystore password is incorrect or keystore data is invalid."
             cat keystore-basic.txt
             exit 1
           fi
 
-          # Open the known V8 alias directly.
           if keytool \
-            -list \
-            -v \
-            -keystore fixed-v8-release.jks \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-            -alias "$V8_ALIAS" \
-            > selected-key.txt 2>&1
-          then
+              -list \
+              -v \
+              -keystore fixed-v8-release.jks \
+              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+              -alias "$V8_ALIAS" \
+              > selected-key.txt 2>&1; then
             echo "V8 alias verified: OK"
           else
             echo "ERROR: Fixed V8 alias could not be opened."
@@ -74,35 +174,104 @@
             exit 1
           fi
 
-          # Verify it is a private signing key.
           if grep -Fq "Entry type: PrivateKeyEntry" selected-key.txt; then
             echo "PrivateKeyEntry verified: OK"
           else
             echo "ERROR: V8 alias is not a PrivateKeyEntry."
+            cat selected-key.txt
             exit 1
           fi
 
-          # Verify exact V8 certificate fingerprint.
           EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
 
           if grep -Fq "$EXPECTED_SHA256" selected-key.txt; then
             echo "V8 SHA-256 fingerprint verified: OK"
           else
-            echo "ERROR: V8 certificate fingerprint does not match."
+            echo "ERROR: V8 keystore fingerprint does not match the fixed V8 signing key."
+            echo "Expected fingerprint:"
+            echo "$EXPECTED_SHA256"
             exit 1
           fi
 
-          # Create signing.properties without heredoc.
           printf '%s\n' \
-            "storeFile=$GITHUB_WORKSPACE/fixed-v8-release.jks" \
+            "storeFile=$GITHUB_WORKSPACE/$PROJECT_DIR/fixed-v8-release.jks" \
             "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
             "keyAlias=$V8_ALIAS" \
             "keyPassword=$ANDROID_KEY_PASSWORD" \
-            > "$PROJECT_DIR/signing.properties"
+            > signing.properties
 
-          if [ ! -s "$PROJECT_DIR/signing.properties" ]; then
-            echo "ERROR: signing.properties was not created."
+          echo "signing.properties created: OK"
+
+      - name: Build signed V8 release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          # IMPORTANT:
+          # The alias is intentionally fixed here and is NOT read from a Secret.
+          ANDROID_KEY_ALIAS: groupfinance-v8
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "BUILDING SIGNED V8 APK"
+          echo "======================"
+
+          gradle :app:assembleRelease --stacktrace --no-daemon
+
+          APK="app/build/outputs/apk/release/app-release.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not created."
             exit 1
           fi
 
-          echo "Signing properties created: OK"
+          echo "APK build completed: OK"
+          ls -lh "$APK"
+
+      - name: Verify APK signature
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "VERIFYING APK SIGNATURE"
+          echo "======================="
+
+          APK="app/build/outputs/apk/release/app-release.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found."
+            exit 1
+          fi
+
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name 'apksigner' | sort -V | tail -1)"
+
+          if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
+            echo "ERROR: apksigner was not found."
+            exit 1
+          fi
+
+          "$APKSIGNER" verify --verbose "$APK"
+
+          keytool -printcert -jarfile "$APK" > apk-certificate.txt
+
+          EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
+
+          if grep -Fq "$EXPECTED_SHA256" apk-certificate.txt; then
+            echo "APK SHA-256 fingerprint matches V8 signing key: OK"
+          else
+            echo "ERROR: APK fingerprint does not match the fixed V8 signing key."
+            cat apk-certificate.txt
+            exit 1
+          fi
+
+          echo "APK signature verification: OK"
+
+      - name: Upload signed V8 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GroupFinance-V8-release-signed
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
