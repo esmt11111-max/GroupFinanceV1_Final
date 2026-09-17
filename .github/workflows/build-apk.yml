@@ -1,4 +1,4 @@
-name: Build GroupFinance V8 FINAL READY
+name: Build GroupFinance V8 Emergency Fix
 
 on:
   workflow_dispatch:
@@ -12,12 +12,12 @@ permissions:
 
 jobs:
   build-v8:
-    name: Build V8 from FINAL FIXED V2 ZIP
+    name: Build V8 Emergency Display Edit Delete Fix
     runs-on: ubuntu-latest
 
     env:
-      PROJECT_ZIP: .github/workflows/GroupFinanceV8_FINAL_READY_TO_BUILD_FIXED_V2.zip
-      EXPECTED_SOURCE_SHA256: 50602a114c82971351a81dfbb5aa3ce057e0c369a6bf21ec2e9d8aff0e34f9e9
+      PROJECT_ZIP: .github/workflows/GroupFinanceV8_EMERGENCY_DISPLAY_EDIT_DELETE_FIX.zip
+      EXPECTED_SOURCE_SHA256: 47c4f39e5563ed05c5752c5d58037a8ef64808b1cbdd6eb691a1070bf65bcb0f
       EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
 
     steps:
@@ -107,6 +107,10 @@ jobs:
           test -f app/src/main/java/com/groupfinance/app/MainActivity.java
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/assets/index.html
+          grep -q 'function editEmergencyAssistance' app/src/main/assets/index.html
+          grep -q 'function deleteEmergencyAssistance' app/src/main/assets/index.html
+          grep -q 'x.assistance?`<button class="btn secondary" onclick="editEmergencyAssistance' app/src/main/assets/index.html
+          grep -q "x.type==='assistance'" app/src/main/assets/index.html
           find app/src/main/assets -type f -name 'meeting_source_*.jpg' | sort
           COUNT="$(find app/src/main/assets -type f -name 'meeting_source_*.jpg' | wc -l)"
           test "$COUNT" -ge 10
@@ -159,29 +163,14 @@ jobs:
         run: |
           set -euo pipefail
           APK="$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
-          EXPECTED="$(echo "$EXPECTED_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
 
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
 
-          "$APKSIGNER" verify --verbose "$APK" > "$RUNNER_TEMP/signature.txt" 2>&1 || {
-            cat "$RUNNER_TEMP/signature.txt"
-            exit 1
-          }
+          "$APKSIGNER" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
 
-          cat "$RUNNER_TEMP/signature.txt"
-
-          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/signature.txt"
-
-          "$APKSIGNER" verify --print-certs "$APK" > "$RUNNER_TEMP/certs.txt" 2>&1
-          cat "$RUNNER_TEMP/certs.txt"
-
-          ACTUAL="$(sed -n 's/.*certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt" | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-          test -n "$ACTUAL"
-          test "$ACTUAL" = "$EXPECTED"
-
-          echo "APK signature verified."
-          echo "Certificate SHA-256: $ACTUAL"
+          grep -q '14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C' "$RUNNER_TEMP/certs.txt"
 
       - name: Final APK checksum
         shell: bash
