@@ -48,9 +48,7 @@ jobs:
           fi
 
           test -f "$P/settings.gradle" || test -f "$P/settings.gradle.kts"
-          test -f "$P/gradlew"
           test -d "$P/app"
-          chmod +x "$P/gradlew"
           echo "Project prepared at $P"
 
       - name: Setup Java 17
@@ -66,12 +64,17 @@ jobs:
           java -version
           javac -version
 
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
       - name: Verify Gradle
         shell: bash
         working-directory: ${{ runner.temp }}/project
         run: |
           set -euo pipefail
-          ./gradlew --version
+          gradle --version
 
       - name: Verify V8 seed
         shell: bash
@@ -137,7 +140,7 @@ jobs:
         working-directory: ${{ runner.temp }}/project
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon clean assembleRelease
+          gradle --no-daemon clean assembleRelease
 
       - name: Locate APK
         shell: bash
