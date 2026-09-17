@@ -159,14 +159,29 @@ jobs:
         run: |
           set -euo pipefail
           APK="$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
+          EXPECTED="$(echo "$EXPECTED_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
 
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
 
-          "$APKSIGNER" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
-          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
+          "$APKSIGNER" verify --verbose "$APK" > "$RUNNER_TEMP/signature.txt" 2>&1 || {
+            cat "$RUNNER_TEMP/signature.txt"
+            exit 1
+          }
 
-          grep -q '14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C' "$RUNNER_TEMP/certs.txt"
+          cat "$RUNNER_TEMP/signature.txt"
+
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/signature.txt"
+
+          "$APKSIGNER" verify --print-certs "$APK" > "$RUNNER_TEMP/certs.txt" 2>&1
+          cat "$RUNNER_TEMP/certs.txt"
+
+          ACTUAL="$(sed -n 's/.*certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt" | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test -n "$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
+
+          echo "APK signature verified."
+          echo "Certificate SHA-256: $ACTUAL"
 
       - name: Final APK checksum
         shell: bash
