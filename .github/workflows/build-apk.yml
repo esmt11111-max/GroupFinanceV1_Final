@@ -16,15 +16,9 @@ jobs:
 
     steps:
 
-      # ============================================================
-      # 1) Checkout
-      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2) Verify exact V8 source ZIP
-      # ============================================================
       - name: Verify V8 source ZIP
         shell: bash
         run: |
@@ -35,18 +29,14 @@ jobs:
           echo "Checking source ZIP..."
 
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Required source ZIP was not found:"
+            echo "ERROR: Required source ZIP was not found."
             echo "$ZIP_FILE"
             exit 1
           fi
 
           echo "Source ZIP found: OK"
-          echo "ZIP size:"
           stat -c '%s bytes' "$ZIP_FILE"
 
-      # ============================================================
-      # 3) Extract source project
-      # ============================================================
       - name: Extract V8 project
         shell: bash
         run: |
@@ -59,9 +49,6 @@ jobs:
 
           echo "Source extracted: OK"
 
-      # ============================================================
-      # 4) Locate Android project
-      # ============================================================
       - name: Locate Android project
         shell: bash
         run: |
@@ -69,10 +56,8 @@ jobs:
 
           if [ -f "extracted/settings.gradle" ] || [ -f "extracted/settings.gradle.kts" ]; then
             PROJECT_DIR="extracted"
-
           elif [ -f "extracted/GroupFinance/settings.gradle" ] || [ -f "extracted/GroupFinance/settings.gradle.kts" ]; then
             PROJECT_DIR="extracted/GroupFinance"
-
           else
             echo "ERROR: Android project root was not found."
             exit 1
@@ -80,8 +65,7 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Android project root:"
-          echo "$PROJECT_DIR"
+          echo "Android project root: $PROJECT_DIR"
 
           if [ ! -d "$PROJECT_DIR/app" ]; then
             echo "ERROR: app directory was not found."
@@ -100,9 +84,6 @@ jobs:
 
           echo "Required project files: OK"
 
-      # ============================================================
-      # 5) Verify V8 source contents
-      # ============================================================
       - name: Verify V8 source contents
         shell: bash
         run: |
@@ -115,9 +96,6 @@ jobs:
           echo "VERIFYING V8 SOURCE CONTENTS"
           echo "========================================"
 
-          # ----------------------------------------------------------
-          # seedGroup
-          # ----------------------------------------------------------
           if grep -Fq "const seedGroup={" "$INDEX_HTML"; then
             echo "seedGroup found: OK"
           elif grep -Fq "const seedGroup =" "$INDEX_HTML"; then
@@ -127,9 +105,6 @@ jobs:
             exit 1
           fi
 
-          # ----------------------------------------------------------
-          # Manifest JSON syntax
-          # ----------------------------------------------------------
           if jq empty "$MANIFEST" >/dev/null 2>&1; then
             echo "Manifest JSON syntax: OK"
           else
@@ -137,36 +112,87 @@ jobs:
             exit 1
           fi
 
-          # ----------------------------------------------------------
-          # Exact V8 data verification
-          # ----------------------------------------------------------
-          if jq -e '
-            (.members | length) == 30
-            and
-            (.meetings | length) == 5
-            and
-            ([.meetings[].date] | sort) == [
-              "2024-10-08",
-              "2024-11-08",
-              "2024-12-08",
-              "2025-01-08",
-              "2025-02-08"
-            ]
-            and
-            all(.meetings[]; (.rows | length) == 30)
-          ' "$MANIFEST" >/dev/null; then
+          MEMBERS_COUNT="$(jq '.members | length' "$MANIFEST")"
+          MEETINGS_COUNT="$(jq '.meetings | length' "$MANIFEST")"
 
-            echo "Manifest verification: 30 members, 5 meetings, 30 rows per meeting: OK"
-            echo "Manifest meeting dates: OK"
+          echo "Members found: $MEMBERS_COUNT"
+          echo "Meetings found: $MEETINGS_COUNT"
 
-          else
-            echo "ERROR: V8 manifest data does not match expected data."
+          if [ "$MEMBERS_COUNT" -ne 30 ]; then
+            echo "ERROR: Expected 30 members."
             exit 1
           fi
 
-      # ============================================================
-      # 6) Verify orientation and field order
-      # ============================================================
+          if [ "$MEETINGS_COUNT" -ne 5 ]; then
+            echo "ERROR: Expected 5 meetings."
+            exit 1
+          fi
+
+          DATE_1="$(jq -r '.meetings[0].date' "$MANIFEST")"
+          DATE_2="$(jq -r '.meetings[1].date' "$MANIFEST")"
+          DATE_3="$(jq -r '.meetings[2].date' "$MANIFEST")"
+          DATE_4="$(jq -r '.meetings[3].date' "$MANIFEST")"
+          DATE_5="$(jq -r '.meetings[4].date' "$MANIFEST")"
+
+          if [ "$DATE_1" != "2024-10-08" ]; then
+            echo "ERROR: First meeting date is incorrect."
+            exit 1
+          fi
+
+          if [ "$DATE_2" != "2024-11-08" ]; then
+            echo "ERROR: Second meeting date is incorrect."
+            exit 1
+          fi
+
+          if [ "$DATE_3" != "2024-12-08" ]; then
+            echo "ERROR: Third meeting date is incorrect."
+            exit 1
+          fi
+
+          if [ "$DATE_4" != "2025-01-08" ]; then
+            echo "ERROR: Fourth meeting date is incorrect."
+            exit 1
+          fi
+
+          if [ "$DATE_5" != "2025-02-08" ]; then
+            echo "ERROR: Fifth meeting date is incorrect."
+            exit 1
+          fi
+
+          ROWS_1="$(jq '.meetings[0].rows | length' "$MANIFEST")"
+          ROWS_2="$(jq '.meetings[1].rows | length' "$MANIFEST")"
+          ROWS_3="$(jq '.meetings[2].rows | length' "$MANIFEST")"
+          ROWS_4="$(jq '.meetings[3].rows | length' "$MANIFEST")"
+          ROWS_5="$(jq '.meetings[4].rows | length' "$MANIFEST")"
+
+          if [ "$ROWS_1" -ne 30 ]; then
+            echo "ERROR: October meeting does not contain 30 rows."
+            exit 1
+          fi
+
+          if [ "$ROWS_2" -ne 30 ]; then
+            echo "ERROR: November meeting does not contain 30 rows."
+            exit 1
+          fi
+
+          if [ "$ROWS_3" -ne 30 ]; then
+            echo "ERROR: December meeting does not contain 30 rows."
+            exit 1
+          fi
+
+          if [ "$ROWS_4" -ne 30 ]; then
+            echo "ERROR: January meeting does not contain 30 rows."
+            exit 1
+          fi
+
+          if [ "$ROWS_5" -ne 30 ]; then
+            echo "ERROR: February meeting does not contain 30 rows."
+            exit 1
+          fi
+
+          echo "Manifest verification: 30 members, 5 meetings, 30 rows per meeting: OK"
+          echo "Manifest meeting dates: OK"
+
       - name: Verify V8 fixes
         shell: bash
         run: |
@@ -180,9 +206,18 @@ jobs:
           echo "VERIFYING V8 FIXES"
           echo "========================================"
 
-          # Orientation
+          if [ ! -f "$MAIN_ACTIVITY" ]; then
+            echo "ERROR: MainActivity.java was not found."
+            exit 1
+          fi
+
+          if [ ! -f "$ANDROID_MANIFEST" ]; then
+            echo "ERROR: AndroidManifest.xml was not found."
+            exit 1
+          fi
+
           if grep -Fq "onConfigurationChanged" "$MAIN_ACTIVITY"; then
-            echo "onConfigurationChanged found: OK"
+            echo "Orientation handling found: OK"
           else
             echo "ERROR: onConfigurationChanged not found."
             exit 1
@@ -195,7 +230,6 @@ jobs:
             exit 1
           fi
 
-          # Emergency
           if grep -Fq "الطوارئ" "$INDEX_HTML"; then
             echo "Emergency field found: OK"
           else
@@ -203,7 +237,6 @@ jobs:
             exit 1
           fi
 
-          # Operating
           if grep -Fq "التشغيله" "$INDEX_HTML"; then
             echo "Operating field found: OK"
           else
@@ -213,26 +246,17 @@ jobs:
 
           echo "V8 fixes verification: OK"
 
-      # ============================================================
-      # 7) Setup Java 17
-      # ============================================================
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ============================================================
-      # 8) Setup Gradle 8.9
-      # ============================================================
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      # ============================================================
-      # 9) Prepare fixed V8 signing key
-      # ============================================================
       - name: Prepare fixed V8 signing key
         shell: bash
         env:
@@ -247,9 +271,6 @@ jobs:
           echo "PREPARING FIXED V8 SIGNING KEY"
           echo "========================================"
 
-          # ----------------------------------------------------------
-          # Check secrets
-          # ----------------------------------------------------------
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "ERROR: ANDROID_KEYSTORE_BASE64 is empty."
             exit 1
@@ -272,30 +293,25 @@ jobs:
 
           echo "Required signing secrets are present: OK"
 
-          # ----------------------------------------------------------
-          # Decode keystore
-          # ----------------------------------------------------------
           rm -f fixed-v8-release.jks
 
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
-            | base64 --decode > fixed-v8-release.jks
+          if printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > fixed-v8-release.jks; then
+            echo "Signing keystore created: OK"
+          else
+            echo "ERROR: Base64 keystore could not be decoded."
+            exit 1
+          fi
 
           if [ ! -s fixed-v8-release.jks ]; then
             echo "ERROR: Decoded keystore is empty."
             exit 1
           fi
 
-          echo "Signing keystore created: OK"
-
-          # ----------------------------------------------------------
-          # Verify store password
-          # ----------------------------------------------------------
           if keytool \
             -list \
             -keystore fixed-v8-release.jks \
             -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-            > keystore-basic.txt 2>&1
-          then
+            > keystore-basic.txt 2>&1; then
             echo "Keystore password verified: OK"
           else
             echo "ERROR: Keystore password is incorrect."
@@ -303,11 +319,6 @@ jobs:
             exit 1
           fi
 
-          # ----------------------------------------------------------
-          # IMPORTANT:
-          # Directly open the alias from the secret.
-          # Do not parse the alias list because GitHub masks secrets.
-          # ----------------------------------------------------------
           rm -f selected-key.txt
 
           if keytool \
@@ -316,8 +327,7 @@ jobs:
             -keystore fixed-v8-release.jks \
             -storepass "$ANDROID_KEYSTORE_PASSWORD" \
             -alias "$ANDROID_KEY_ALIAS" \
-            > selected-key.txt 2>&1
-          then
+            > selected-key.txt 2>&1; then
             echo "V8 alias verified: OK"
           else
             echo "ERROR: The configured V8 alias could not be opened."
@@ -325,9 +335,6 @@ jobs:
             exit 1
           fi
 
-          # ----------------------------------------------------------
-          # Verify key type
-          # ----------------------------------------------------------
           if grep -Fq "Entry type: PrivateKeyEntry" selected-key.txt; then
             echo "PrivateKeyEntry verified: OK"
           else
@@ -335,9 +342,6 @@ jobs:
             exit 1
           fi
 
-          # ----------------------------------------------------------
-          # Verify fixed V8 certificate
-          # ----------------------------------------------------------
           EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
 
           if grep -Fq "$EXPECTED_SHA256" selected-key.txt; then
@@ -347,21 +351,20 @@ jobs:
             exit 1
           fi
 
-          # ----------------------------------------------------------
-          # Create signing.properties
-          # ----------------------------------------------------------
-          cat > "$PROJECT_DIR/signing.properties" <<EOF
-storeFile=$GITHUB_WORKSPACE/fixed-v8-release.jks
-storePassword=$ANDROID_KEYSTORE_PASSWORD
-keyAlias=$ANDROID_KEY_ALIAS
-keyPassword=$ANDROID_KEY_PASSWORD
-EOF
+          printf '%s\n' \
+            "storeFile=$GITHUB_WORKSPACE/fixed-v8-release.jks" \
+            "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
+            "keyAlias=$ANDROID_KEY_ALIAS" \
+            "keyPassword=$ANDROID_KEY_PASSWORD" \
+            > "$PROJECT_DIR/signing.properties"
+
+          if [ ! -s "$PROJECT_DIR/signing.properties" ]; then
+            echo "ERROR: signing.properties was not created."
+            exit 1
+          fi
 
           echo "Signing properties created: OK"
 
-      # ============================================================
-      # 10) Build signed V8 APK
-      # ============================================================
       - name: Build signed V8 APK
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
@@ -370,14 +373,8 @@ EOF
 
           chmod +x gradlew
 
-          ./gradlew \
-            :app:assembleRelease \
-            --stacktrace \
-            --no-daemon
+          ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
-      # ============================================================
-      # 11) Verify APK exists
-      # ============================================================
       - name: Verify V8 APK exists
         shell: bash
         run: |
@@ -393,9 +390,6 @@ EOF
           echo "APK found: OK"
           stat -c '%s bytes' "$APK_PATH"
 
-      # ============================================================
-      # 12) Verify APK contains V8 data
-      # ============================================================
       - name: Verify APK contains V8 data
         shell: bash
         run: |
@@ -419,9 +413,6 @@ EOF
             exit 1
           fi
 
-      # ============================================================
-      # 13) Verify APK signature
-      # ============================================================
       - name: Verify APK signature
         shell: bash
         run: |
@@ -429,17 +420,7 @@ EOF
 
           APK_PATH="$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
 
-          BUILD_TOOLS_DIR=""
-
-          while IFS= read -r dir; do
-            BUILD_TOOLS_DIR="$dir"
-          done < <(
-            find "$ANDROID_HOME/build-tools" \
-              -mindepth 1 \
-              -maxdepth 1 \
-              -type d \
-              | sort -V
-          )
+          BUILD_TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 
           if [ -z "$BUILD_TOOLS_DIR" ]; then
             echo "ERROR: Android build-tools directory not found."
@@ -457,9 +438,6 @@ EOF
 
           echo "APK signature verification: OK"
 
-      # ============================================================
-      # 14) Verify final V8 certificate
-      # ============================================================
       - name: Verify V8 signing certificate
         shell: bash
         run: |
@@ -467,24 +445,11 @@ EOF
 
           APK_PATH="$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
 
-          BUILD_TOOLS_DIR=""
-
-          while IFS= read -r dir; do
-            BUILD_TOOLS_DIR="$dir"
-          done < <(
-            find "$ANDROID_HOME/build-tools" \
-              -mindepth 1 \
-              -maxdepth 1 \
-              -type d \
-              | sort -V
-          )
+          BUILD_TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 
           APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
 
-          "$APKSIGNER" verify \
-            --print-certs \
-            "$APK_PATH" \
-            > apk-cert.txt 2>&1
+          "$APKSIGNER" verify --print-certs "$APK_PATH" > apk-cert.txt 2>&1
 
           EXPECTED_SHA256="14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C"
 
@@ -496,9 +461,6 @@ EOF
             exit 1
           fi
 
-      # ============================================================
-      # 15) Upload final APK
-      # ============================================================
       - name: Upload V8 Release APK
         uses: actions/upload-artifact@v4
         with:
