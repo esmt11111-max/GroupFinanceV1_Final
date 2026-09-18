@@ -1,4 +1,4 @@
-name: Build GroupFinance V8 FINAL READY
+name: Build GroupFinance V8 - 4 Features FINAL
 
 on:
   workflow_dispatch:
@@ -10,18 +10,18 @@ on:
 permissions:
   contents: read
 
+env:
+  PROJECT_ZIP: .github/workflows/GroupFinanceV8_UPDATE_4_FEATURES_FINAL.zip
+  EXPECTED_SOURCE_SHA256: 76741454acd7c224ff451fd2cd970e76d09f3f44b81c7219b7a02fea9f5d88fd
+  EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
+
 jobs:
-  build-v8:
-    name: Build V8 from FINAL FIXED V2 ZIP
+  build-v8-update:
+    name: Build V8 update - preserve current data
     runs-on: ubuntu-latest
 
-    env:
-      PROJECT_ZIP: .github/workflows/GroupFinanceV8_EMERGENCY_DISPLAY_EDIT_DELETE_FIX.zip
-      EXPECTED_SOURCE_SHA256: 47c4f39e5563ed05c5752c5d58037a8ef64808b1cbdd6eb691a1070bf65bcb0f
-      EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
-
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Verify source ZIP
@@ -29,29 +29,103 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$PROJECT_ZIP"
-          ACTUAL_SHA="$(sha256sum "$PROJECT_ZIP" | awk '{print $1}')"
-          test "$ACTUAL_SHA" = "$EXPECTED_SOURCE_SHA256"
-          echo "Source ZIP verified: $ACTUAL_SHA"
+          unzip -tq "$PROJECT_ZIP"
+          ACTUAL="$(sha256sum "$PROJECT_ZIP" | awk '{print $1}')"
+          echo "Source SHA-256: $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED_SOURCE_SHA256"
+          echo "Source ZIP verified."
 
-      - name: Prepare project
+      - name: Extract project
         shell: bash
         run: |
           set -euo pipefail
-          P="$RUNNER_TEMP/project"
+          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
           rm -rf "$P"
           mkdir -p "$P"
           unzip -q "$PROJECT_ZIP" -d "$P"
-
+          if [ -d "$P/GroupFinanceV8_EMERGENCY_DISPLAY_EDIT_DELETE_FIX" ]; then
+            ROOT="$P/GroupFinanceV8_EMERGENCY_DISPLAY_EDIT_DELETE_FIX"
+            cp -a "$ROOT"/. "$P"/
+          fi
           if [ ! -f "$P/settings.gradle" ] && [ ! -f "$P/settings.gradle.kts" ]; then
             ROOT="$(find "$P" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
             if [ -n "$ROOT" ] && { [ -f "$ROOT/settings.gradle" ] || [ -f "$ROOT/settings.gradle.kts" ]; }; then
               cp -a "$ROOT"/. "$P"/
             fi
           fi
-
           test -f "$P/settings.gradle" || test -f "$P/settings.gradle.kts"
           test -d "$P/app"
-          echo "Project prepared at $P"
+          test -f "$P/app/src/main/assets/index.html"
+          test -f "$P/app/src/main/java/com/groupfinance/app/MainActivity.java"
+          echo "Project extracted: OK"
+
+      - name: Verify four requested features in source
+        shell: bash
+        run: |
+          set -euo pipefail
+          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
+          H="$P/app/src/main/assets/index.html"
+          J="$P/app/src/main/java/com/groupfinance/app/MainActivity.java"
+
+          grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
+          grep -Fq "nav('loans')" "$H"
+          grep -Fq "nav('withdrawals')" "$H"
+          grep -Fq 'printMemberReport' "$H"
+          grep -Fq 'shareMemberReport' "$H"
+          grep -Fq 'printFinancialReport' "$H"
+          grep -Fq 'shareFinancialReport' "$H"
+          grep -Fq 'Android.printPage' "$H"
+          grep -Fq 'Android.sharePdf' "$H"
+          grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
+          grep -Fq 'function renderFunds()' "$H"
+          grep -Fq 'function renderReports()' "$H"
+          grep -Fq 'function renderDashboard()' "$H"
+          grep -Fq 'db.meetings.reduce' "$H"
+          grep -Fq 'r.emergency' "$H"
+          grep -Fq 'r.operation' "$H"
+          grep -Fq 'androidx.core.content.FileProvider' "$J"
+          grep -Fq 'public void printPage' "$J"
+          grep -Fq 'public void sharePdf' "$J"
+          grep -Fq 'createAndSharePdf' "$J"
+          test -f "$P/app/src/main/res/xml/file_paths.xml"
+
+          # Data-preservation checks: the app still uses the existing V5 group/localStorage
+          # database and the one-time seed flag; normal updates do not replace current data.
+          grep -Fq "const GROUP_KEY='group_fin_groups_v5'" "$H"
+          grep -Fq "const V8_DATA_SEED='v8-data-seed-2026-09-16'" "$H"
+          grep -Fq "localStorage.getItem(V8_DATA_SEED)!=='1'" "$H"
+          grep -Fq "function save()" "$H"
+
+          echo "Four features + data preservation markers: OK"
+
+      - name: Verify JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
+          node - "$P/app/src/main/assets/index.html" <<'NODE'
+          const fs = require('fs');
+          const file = process.argv[2];
+          const html = fs.readFileSync(file, 'utf8');
+          const scripts = [...html.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)]
+            .map(m => m[1]).filter(x => x.trim());
+          if (!scripts.length) throw new Error('No JavaScript found');
+          scripts.forEach((code, i) => {
+            try { new Function(code); }
+            catch (e) { throw new Error(`JavaScript syntax error in script ${i + 1}: ${e.message}`); }
+          });
+          const required = [
+            'renderDashboard','renderFunds','renderReports','openMember','memberSavings',
+            'loanStats','sumFund','exportData','importData','save','printMemberReport',
+            'shareMemberReport','printFinancialReport','shareFinancialReport'
+          ];
+          const defs = new Set();
+          for (const m of html.matchAll(/(?:function|async function)\s+([A-Za-z_$][\w$]*)/g)) defs.add(m[1]);
+          for (const m of html.matchAll(/window\.([A-Za-z_$][\w$]*)\s*=/g)) defs.add(m[1]);
+          const missing = required.filter(x => !defs.has(x));
+          if (missing.length) throw new Error('Missing required functions: ' + missing.join(', '));
+          console.log(`JavaScript syntax + required functions: OK (${scripts.length} script block(s))`);
+          NODE
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -59,144 +133,81 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Verify Java
-        shell: bash
-        run: |
-          set -euo pipefail
-          java -version
-          javac -version
-
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Verify Gradle
+      - name: Create fixed signing properties
         shell: bash
-        working-directory: ${{ runner.temp }}/project
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          gradle --version
-
-      - name: Verify V8 seed
-        shell: bash
-        working-directory: ${{ runner.temp }}/project
-        run: |
-          set -euo pipefail
-          SEED="app/src/main/assets/v8_seed_manifest.json"
-          test -f "$SEED"
-
-          MEMBERS="$(node -e "const x=require('./$SEED'); console.log(Array.isArray(x.members)?x.members.length:0)")"
-          MEETINGS="$(node -e "const x=require('./$SEED'); console.log(Array.isArray(x.meetings)?x.meetings.length:0)")"
-
-          echo "Members: $MEMBERS"
-          echo "Meetings: $MEETINGS"
-
-          test "$MEMBERS" = "30"
-          test "$MEETINGS" = "5"
-
-          grep -q '2024-10-08' "$SEED"
-          grep -q '2024-11-08' "$SEED"
-          grep -q '2024-12-08' "$SEED"
-          grep -q '2025-01-08' "$SEED"
-          grep -q '2025-02-08' "$SEED"
-
-      - name: Verify V8 source files
-        shell: bash
-        working-directory: ${{ runner.temp }}/project
-        run: |
-          set -euo pipefail
-          test -f app/src/main/java/com/groupfinance/app/MainActivity.java
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/assets/index.html
-          find app/src/main/assets -type f -name 'meeting_source_*.jpg' | sort
-          COUNT="$(find app/src/main/assets -type f -name 'meeting_source_*.jpg' | wc -l)"
-          test "$COUNT" -ge 10
-
-      - name: Create signing properties
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${ANDROID_KEYSTORE_BASE64:-}"
-          test -n "${ANDROID_KEYSTORE_PASSWORD:-}"
-          test -n "${ANDROID_KEY_PASSWORD:-}"
-
-          P="$RUNNER_TEMP/project"
+          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_PASSWORD"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$P/groupfinance-v8.keystore"
-
+          test -s "$P/groupfinance-v8.keystore"
+          keytool -list -keystore "$P/groupfinance-v8.keystore" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias groupfinance-v8 >/dev/null
           cat > "$P/signing.properties" <<EOF
           storeFile=$P/groupfinance-v8.keystore
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyAlias=groupfinance-v8
           keyPassword=$ANDROID_KEY_PASSWORD
           EOF
+          chmod 600 "$P/groupfinance-v8.keystore" "$P/signing.properties"
+          echo "Fixed signing key prepared."
 
-          test -s "$P/groupfinance-v8.keystore"
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Verify application identity and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
+          grep -Fq "applicationId 'com.groupfinance.app'" "$P/app/build.gradle"
+          grep -Fq 'versionCode 14' "$P/app/build.gradle"
+          grep -Fq "versionName '8.0.2'" "$P/app/build.gradle"
+          echo "Application identity/version: OK"
 
       - name: Build release APK
         shell: bash
-        working-directory: ${{ runner.temp }}/project
+        working-directory: ${{ runner.temp }}/GroupFinanceV8_UPDATE_4_FEATURES_FINAL
         run: |
           set -euo pipefail
           gradle --no-daemon clean assembleRelease
 
-      - name: Locate APK
+      - name: Verify APK signature and fixed certificate
         shell: bash
-        working-directory: ${{ runner.temp }}/project
         run: |
           set -euo pipefail
-          APK="$(find app/build/outputs/apk/release -type f -name '*.apk' | head -n 1)"
+          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
+          APK="$(find "$P/app/build/outputs/apk/release" -type f -name '*.apk' | head -n 1)"
           test -n "$APK"
-          mkdir -p "$RUNNER_TEMP/final"
-          cp "$APK" "$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
-          ls -lh "$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
-
-      - name: Verify APK signature
-        shell: bash
-        working-directory: ${{ runner.temp }}/project
-        run: |
-          set -euo pipefail
-          APK="$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
-          EXPECTED="$(echo "$EXPECTED_CERT_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          CERT="$(keytool -printcert -jarfile "$APK" | awk -F': ' '/SHA256:/{print $2; exit}')"
+          echo "APK certificate SHA-256: $CERT"
+          test "$CERT" = "$EXPECTED_CERT_SHA256"
+          echo "APK fixed signing identity: VERIFIED"
 
-          # apksigner can return non-zero because of non-fatal META-INF warnings.
-          # We validate the actual V2 result and certificate fingerprint separately.
-          set +e
-          "$APKSIGNER" verify --verbose "$APK" > "$RUNNER_TEMP/signature.txt" 2>&1
-          VERIFY_STATUS=$?
-          set -e
-
-          cat "$RUNNER_TEMP/signature.txt"
-          echo "apksigner verify exit status: $VERIFY_STATUS"
-
-          grep -Fq "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/signature.txt"
-
-          "$APKSIGNER" verify --print-certs "$APK" > "$RUNNER_TEMP/certs.txt" 2>&1
-          cat "$RUNNER_TEMP/certs.txt"
-
-          ACTUAL="$(sed -n 's/.*certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt" | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-          test -n "$ACTUAL"
-          test "$ACTUAL" = "$EXPECTED"
-
-          echo "V2 signature: OK"
-          echo "Certificate SHA-256: $ACTUAL"
-      - name: Final APK checksum
+      - name: Package final APK
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum "$RUNNER_TEMP/final/GroupFinance-V8-FINAL-signed.apk"
+          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp "$P/app/build/outputs/apk/release/app-release.apk" "$RUNNER_TEMP/final/GroupFinance-V8-UPDATE-4-FEATURES-FINAL.apk"
+          sha256sum "$RUNNER_TEMP/final/GroupFinance-V8-UPDATE-4-FEATURES-FINAL.apk" > "$RUNNER_TEMP/final/SHA256.txt"
 
       - name: Upload final APK
         uses: actions/upload-artifact@v4
         with:
-          name: GroupFinance-V8-FINAL-signed
-          path: ${{ runner.temp }}/final/GroupFinance-V8-FINAL-signed.apk
+          name: GroupFinance-V8-UPDATE-4-FEATURES-FINAL
+          path: ${{ runner.temp }}/final/
           if-no-files-found: error
           retention-days: 30
+
