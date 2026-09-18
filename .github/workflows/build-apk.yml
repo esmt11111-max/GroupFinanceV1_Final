@@ -40,13 +40,15 @@ jobs:
               | head -1
           )"
 
-          test -n "$SOURCE_ZIP"
+          if [ -z "$SOURCE_ZIP" ]; then
+            echo "::error::Source ZIP not found: $SOURCE_ZIP_NAME"
+            exit 1
+          fi
 
           echo "SOURCE_ZIP=$SOURCE_ZIP" >> "$GITHUB_ENV"
 
-          echo "Source ZIP:"
+          echo "Source ZIP found:"
           echo "$SOURCE_ZIP"
-
           ls -lh "$SOURCE_ZIP"
 
       - name: Validate source ZIP
@@ -79,21 +81,33 @@ jobs:
           )"
 
           if [ -z "$INDEX_FILE" ]; then
-            echo "::error::index.html was not found."
+            echo "::error::app/src/main/assets/index.html was not found."
+            echo "Extracted files:"
+            find "$EXTRACT" -maxdepth 5 -type f | head -100
             exit 1
           fi
 
           PROJECT_ROOT="${INDEX_FILE%/app/src/main/assets/index.html}"
 
-          test -f "$PROJECT_ROOT/settings.gradle" \
-            || test -f "$PROJECT_ROOT/settings.gradle.kts"
+          if [ ! -f "$PROJECT_ROOT/settings.gradle" ] &&
+             [ ! -f "$PROJECT_ROOT/settings.gradle.kts" ]; then
+            echo "::error::Gradle settings file was not found."
+            exit 1
+          fi
 
-          test -d "$PROJECT_ROOT/app"
-          test -f "$PROJECT_ROOT/app/src/main/assets/index.html"
+          if [ ! -f "$PROJECT_ROOT/gradlew" ]; then
+            echo "::error::gradlew was not found."
+            exit 1
+          fi
+
+          if [ ! -d "$PROJECT_ROOT/app" ]; then
+            echo "::error::Android app directory was not found."
+            exit 1
+          fi
 
           echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
 
-          echo "Project root:"
+          echo "Android project:"
           echo "$PROJECT_ROOT"
 
       - name: Verify V8 seed and source
@@ -107,8 +121,9 @@ jobs:
 
           test -f "$H"
           test -f "$S"
-          test -f "$P/app/src/main/java/com/groupfinance/app/MainActivity.java"
+
           test -f "$P/app/src/main/AndroidManifest.xml"
+          test -f "$P/app/src/main/java/com/groupfinance/app/MainActivity.java"
 
           MEMBERS="$(
             node -e \
@@ -167,7 +182,7 @@ jobs:
 
           echo "Existing V8 data system: VERIFIED"
 
-      - name: Verify no destructive reset
+      - name: Verify no destructive data reset
         shell: bash
         run: |
           set -euo pipefail
@@ -190,7 +205,7 @@ jobs:
             --include="*.html" \
             --include="*.js"; then
 
-            echo "::error::IndexedDB deletion detected."
+            echo "::error::indexedDB.deleteDatabase() detected."
             exit 1
           fi
 
@@ -204,31 +219,31 @@ jobs:
           H="$PROJECT_ROOT/app/src/main/assets/index.html"
           J="$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
 
-          # Feature 1: financing remaining balance
+          # 1 - Financing remaining balance
           grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
 
-          # Feature 2 and 3:
-          # Emergency and operating fund calculations.
-          # Use the actual calculation fields/functions rather than
-          # requiring one exact Arabic UI sentence.
+          # 2 - Emergency fund
           grep -Fq 'function renderFunds()' "$H"
           grep -Fq 'r.emergency' "$H"
+
+          # 3 - Operating fund
           grep -Fq 'r.operation' "$H"
           grep -Fq 'db.meetings.reduce' "$H"
 
-          # Main/report calculations
+          # Dashboard and reports
           grep -Fq 'function renderDashboard()' "$H"
           grep -Fq 'function renderReports()' "$H"
 
-          # Feature 4: reports / printing / sharing
+          # 4 - Printing and sharing
           grep -Fq 'printMemberReport' "$H"
           grep -Fq 'shareMemberReport' "$H"
           grep -Fq 'printFinancialReport' "$H"
           grep -Fq 'shareFinancialReport' "$H"
+
+          # Android PDF support
           grep -Fq 'Android.printPage' "$H"
           grep -Fq 'Android.sharePdf' "$H"
 
-          # Android PDF support
           grep -Fq 'androidx.core.content.FileProvider' "$J"
           grep -Fq 'public void printPage' "$J"
           grep -Fq 'public void sharePdf' "$J"
@@ -283,12 +298,15 @@ jobs:
 
           echo "JavaScript: VERIFIED"
 
+      # IMPORTANT:
+      # Do NOT enable Gradle cache here.
+      # The Android project is extracted into RUNNER_TEMP,
+      # while setup-java searches the repository root for Gradle files.
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -325,7 +343,7 @@ jobs:
 
           echo "KEYSTORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
 
-          echo "Fixed V8 key: VERIFIED"
+          echo "Fixed V8 signing key: VERIFIED"
 
       - name: Verify V8 signing certificate
         shell: bash
@@ -356,12 +374,6 @@ jobs:
               | tr -d '[:space:]'
           )"
 
-          echo "Expected:"
-          echo "$EXPECTED"
-
-          echo "Actual:"
-          echo "$ACTUAL"
-
           test "$ACTUAL" = "$EXPECTED"
 
           echo "V8 signing certificate: VERIFIED"
@@ -385,37 +397,116 @@ jobs:
 
           echo "Signing properties: CREATED"
 
-      - name: Build release APK
+      - name: Configure release version and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          GRADLE_FILE="$PROJECT_ROOT/app/build.gradle"
+
+          if [ ! -f "$GRADLE_FILE" ]; then
+            GRADLE_FILE="$PROJECT_ROOT/app/build.gradle.kts"
+          fi
+
+          test -f "$GRADLE_FILE"
+
+          python3 - "$GRADLE_FILE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
+          import sys
+          from pathlib import Path
+
+          file = Path(sys.argv[1])
+          version_code = sys.argv[2]
+          version_name = sys.argv[3]
+
+          text = file.read_text(encoding="utf-8")
+
+          import re
+
+          text, n1 = re.subn(
+              r'versionCode\s+\d+',
+              f'versionCode {version_code}',
+              text,
+              count=1
+          )
+
+          text, n2 = re.subn(
+              r'versionName\s+["\'][^"\']+["\']',
+              f'versionName "{version_name}"',
+              text,
+              count=1
+          )
+
+          if n1 != 1 or n2 != 1:
+              print("Could not safely update version information.")
+              sys.exit(1)
+
+          file.write_text(text, encoding="utf-8")
+          PY
+
+          echo "Release version configured:"
+          echo "versionCode=$VERSION_CODE"
+          echo "versionName=$VERSION_NAME"
+
+      - name: Verify Gradle configuration
         shell: bash
         working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           set -euo pipefail
 
-          test -f ./gradlew
-
           chmod +x ./gradlew
 
-          ./gradlew clean assembleRelease --no-daemon --stacktrace
+          ./gradlew --version
 
-      - name: Locate APK
+          echo "Gradle configuration: VERIFIED"
+
+      - name: Clean Gradle project
+        shell: bash
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -euo pipefail
+
+          ./gradlew clean --no-daemon
+
+      - name: Build signed release APK
+        shell: bash
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          set -euo pipefail
+
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace
+
+      - name: Locate release APK
         shell: bash
         run: |
           set -euo pipefail
 
+          APK_DIR="$PROJECT_ROOT/app/build/outputs/apk/release"
+
           APK="$(
-            find "$PROJECT_ROOT/app/build/outputs/apk/release" \
+            find "$APK_DIR" \
               -type f \
               -name "*.apk" \
               | head -1
           )"
 
-          test -n "$APK"
+          if [ -z "$APK" ]; then
+            echo "::error::No release APK was produced."
+
+            echo "Available output files:"
+            find "$PROJECT_ROOT/app/build/outputs" \
+              -type f \
+              -maxdepth 6 \
+              2>/dev/null || true
+
+            exit 1
+          fi
 
           echo "RELEASE_APK=$APK" >> "$GITHUB_ENV"
 
-          echo "APK:"
+          echo "Release APK:"
           echo "$APK"
-
           ls -lh "$APK"
 
       - name: Verify APK package and version
@@ -488,17 +579,11 @@ jobs:
               | tr -d '[:space:]'
           )"
 
-          echo "Expected V8 certificate:"
-          echo "$EXPECTED"
-
-          echo "Final APK certificate:"
-          echo "$ACTUAL"
-
           test "$ACTUAL" = "$EXPECTED"
 
           echo "FINAL APK SIGNATURE: VERIFIED"
 
-      - name: Prepare final artifact
+      - name: Prepare final APK
         shell: bash
         run: |
           set -euo pipefail
@@ -521,6 +606,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: GroupFinance-V8-FINAL-UPDATE
-          path: ${{ runner.temp }}/final/
+          path: ${{ runner.temp }}/final
           if-no-files-found: error
           retention-days: 30
