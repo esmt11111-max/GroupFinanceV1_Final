@@ -67,8 +67,133 @@ jobs:
 
           echo "Source ZIP SHA-256:"
           sha256sum "$SOURCE_ZIP"
-
       - name: Extract and locate real Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXTRACT="$RUNNER_TEMP/GroupFinance_SOURCE"
+
+          rm -rf "$EXTRACT"
+          mkdir -p "$EXTRACT"
+
+          unzip -q "$SOURCE_ZIP" -d "$EXTRACT"
+
+          echo "Searching for V8 index.html..."
+
+          INDEX_FILE="$(
+            find "$EXTRACT" \
+              -type f \
+              -path "*/app/src/main/assets/index.html" \
+              -print \
+              | head -1
+          )"
+
+          if [ -z "$INDEX_FILE" ]; then
+            echo "::error::V8 index.html was not found."
+            echo "Files found in ZIP:"
+            find "$EXTRACT" -maxdepth 7 -type f | sort | head -500
+            exit 1
+          fi
+
+          echo "Found index.html:"
+          echo "$INDEX_FILE"
+
+          PROJECT_ROOT="${INDEX_FILE%/app/src/main/assets/index.html}"
+
+          if [ "$PROJECT_ROOT" = "$INDEX_FILE" ]; then
+            echo "::error::Could not determine project root."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_ROOT/settings.gradle" ] && \
+             [ ! -f "$PROJECT_ROOT/settings.gradle.kts" ]; then
+            echo "::error::settings.gradle was not found at:"
+            echo "$PROJECT_ROOT"
+            exit 1
+          fi
+
+          if [ ! -d "$PROJECT_ROOT/app" ]; then
+            echo "::error::app directory was not found."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_ROOT/app/src/main/assets/index.html" ]; then
+            echo "::error::index.html is missing from the detected project root."
+            exit 1
+          fi
+
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
+
+          echo "========================================"
+          echo "REAL V8 PROJECT ROOT:"
+          echo "$PROJECT_ROOT"
+          echo "========================================"
+
+          echo "Android project verified successfully."
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXTRACT="$RUNNER_TEMP/GroupFinance_SOURCE"
+
+          rm -rf "$EXTRACT"
+          mkdir -p "$EXTRACT"
+
+          unzip -q "$SOURCE_ZIP" -d "$EXTRACT"
+
+          echo "Searching for V8 index.html..."
+
+          INDEX_FILE="$(
+            find "$EXTRACT" \
+              -type f \
+              -path "*/app/src/main/assets/index.html" \
+              -print \
+              | head -1
+          )"
+
+          if [ -z "$INDEX_FILE" ]; then
+            echo "::error::V8 index.html was not found."
+            echo "Files found in ZIP:"
+            find "$EXTRACT" -maxdepth 7 -type f | sort | head -500
+            exit 1
+          fi
+
+          echo "Found index.html:"
+          echo "$INDEX_FILE"
+
+          PROJECT_ROOT="${INDEX_FILE%/app/src/main/assets/index.html}"
+
+          if [ "$PROJECT_ROOT" = "$INDEX_FILE" ]; then
+            echo "::error::Could not determine project root."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_ROOT/settings.gradle" ] && \
+             [ ! -f "$PROJECT_ROOT/settings.gradle.kts" ]; then
+            echo "::error::settings.gradle was not found at:"
+            echo "$PROJECT_ROOT"
+            exit 1
+          fi
+
+          if [ ! -d "$PROJECT_ROOT/app" ]; then
+            echo "::error::app directory was not found."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_ROOT/app/src/main/assets/index.html" ]; then
+            echo "::error::index.html is missing from the detected project root."
+            exit 1
+          fi
+
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
+
+          echo "========================================"
+          echo "REAL V8 PROJECT ROOT:"
+          echo "$PROJECT_ROOT"
+          echo "========================================"
+
+          echo "Android project verified successfully."
         shell: bash
         run: |
           set -euo pipefail
