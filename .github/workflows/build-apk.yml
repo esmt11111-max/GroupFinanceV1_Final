@@ -1,4 +1,4 @@
-name: Build GroupFinance V8 - 4 Features FINAL
+name: Build GroupFinance V8 - 4 Features FINAL UPDATE
 
 on:
   workflow_dispatch:
@@ -11,198 +11,360 @@ permissions:
   contents: read
 
 env:
-  PROJECT_ZIP: .github/workflows/GroupFinanceV8_UPDATE_4_FEATURES_FINAL.zip
+  SOURCE_ZIP_NAME: GroupFinanceV8_UPDATE_4_FEATURES_FINAL_FIXED.zip
   EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
+  APPLICATION_ID: com.groupfinance.app
+  VERSION_CODE: 15
+  VERSION_NAME: 8.0.2
 
 jobs:
+
   build-v8-update:
-    name: Build V8 update - preserve current data
+    name: Build GroupFinance V8 Update - Preserve Existing Data
     runs-on: ubuntu-latest
 
     steps:
+
+      # ============================================================
+      # 1. تحميل ملفات المستودع
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Verify source ZIP
+
+      # ============================================================
+      # 2. البحث عن ملف المصدر الحقيقي
+      # ============================================================
+      - name: Locate source ZIP
         shell: bash
         run: |
           set -euo pipefail
-          test -f "$PROJECT_ZIP"
-          unzip -tq "$PROJECT_ZIP"
-          echo "Source ZIP integrity verified."
 
-      - name: Extract project
-        shell: bash
-        run: |
-          set -euo pipefail
-          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
-          rm -rf "$P"
-          mkdir -p "$P"
-          unzip -q "$PROJECT_ZIP" -d "$P"
-          if [ -d "$P/GroupFinanceV8_EMERGENCY_DISPLAY_EDIT_DELETE_FIX" ]; then
-            ROOT="$P/GroupFinanceV8_EMERGENCY_DISPLAY_EDIT_DELETE_FIX"
-            cp -a "$ROOT"/. "$P"/
+          echo "Searching for source ZIP:"
+          echo "$SOURCE_ZIP_NAME"
+
+          mapfile -t FOUND_ZIPS < <(
+            find "$GITHUB_WORKSPACE" \
+              -type f \
+              -name "$SOURCE_ZIP_NAME" \
+              -not -path '*/.git/*' \
+              -print
+          )
+
+          if [ "${#FOUND_ZIPS[@]}" -eq 0 ]; then
+            echo ""
+            echo "ERROR: Source ZIP was not found."
+            echo ""
+            echo "Expected file:"
+            echo "$SOURCE_ZIP_NAME"
+            echo ""
+            echo "Files currently in repository:"
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 4 \
+              -type f \
+              -print | sort
+            exit 1
           fi
-          if [ ! -f "$P/settings.gradle" ] && [ ! -f "$P/settings.gradle.kts" ]; then
-            ROOT="$(find "$P" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-            if [ -n "$ROOT" ] && { [ -f "$ROOT/settings.gradle" ] || [ -f "$ROOT/settings.gradle.kts" ]; }; then
-              cp -a "$ROOT"/. "$P"/
+
+          if [ "${#FOUND_ZIPS[@]}" -gt 1 ]; then
+            echo "ERROR: More than one source ZIP was found:"
+            printf '%s\n' "${FOUND_ZIPS[@]}"
+            echo ""
+            echo "Keep only ONE copy of:"
+            echo "$SOURCE_ZIP_NAME"
+            exit 1
+          fi
+
+          SOURCE_ZIP="${FOUND_ZIPS[0]}"
+
+          echo "SOURCE_ZIP=$SOURCE_ZIP" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "Source ZIP found:"
+          echo "$SOURCE_ZIP"
+
+
+      # ============================================================
+      # 3. فحص سلامة ZIP
+      # ============================================================
+      - name: Verify source ZIP integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f "$SOURCE_ZIP"
+
+          unzip -tq "$SOURCE_ZIP"
+
+          echo "Source ZIP integrity: OK"
+
+
+      # ============================================================
+      # 4. استخراج المشروع
+      # ============================================================
+      - name: Extract source project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT_DIR="$RUNNER_TEMP/GroupFinanceV8_SOURCE"
+
+          rm -rf "$PROJECT_DIR"
+          mkdir -p "$PROJECT_DIR"
+
+          unzip -q "$SOURCE_ZIP" -d "$PROJECT_DIR"
+
+          echo "Extracted files:"
+          find "$PROJECT_DIR" -maxdepth 3 -type f -print | sort | head -200
+
+          # --------------------------------------------------------
+          # تحديد جذر مشروع Android الحقيقي
+          # --------------------------------------------------------
+
+          if [ -f "$PROJECT_DIR/settings.gradle" ] || \
+             [ -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+
+            PROJECT_ROOT="$PROJECT_DIR"
+
+          else
+
+            mapfile -t ROOTS < <(
+              find "$PROJECT_DIR" \
+                -mindepth 1 \
+                -maxdepth 2 \
+                -type f \
+                -name "settings.gradle" -o -name "settings.gradle.kts" \
+                -print
+            )
+
+            if [ "${#ROOTS[@]}" -eq 0 ]; then
+              echo "ERROR: Android settings.gradle was not found."
+              exit 1
             fi
-          fi
-          test -f "$P/settings.gradle" || test -f "$P/settings.gradle.kts"
-          test -d "$P/app"
-          test -f "$P/app/src/main/assets/index.html"
-          test -f "$P/app/src/main/java/com/groupfinance/app/MainActivity.java"
-          echo "Project extracted: OK"
 
-      - name: Verify four requested features in source
+            if [ "${#ROOTS[@]}" -gt 1 ]; then
+              echo "ERROR: More than one Android project root was detected:"
+              printf '%s\n' "${ROOTS[@]}"
+              exit 1
+            fi
+
+            SETTINGS_FILE="${ROOTS[0]}"
+            PROJECT_ROOT="$(dirname "$SETTINGS_FILE")"
+          fi
+
+          test -f "$PROJECT_ROOT/settings.gradle" || \
+          test -f "$PROJECT_ROOT/settings.gradle.kts"
+
+          test -d "$PROJECT_ROOT/app"
+
+          test -f "$PROJECT_ROOT/app/build.gradle" || \
+          test -f "$PROJECT_ROOT/app/build.gradle.kts"
+
+          test -f "$PROJECT_ROOT/app/src/main/assets/index.html"
+
+          test -f "$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
+
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "Android project root:"
+          echo "$PROJECT_ROOT"
+
+
+      # ============================================================
+      # 5. التحقق من بنية المشروع والهوية
+      # ============================================================
+      - name: Verify Android project identity
         shell: bash
         run: |
           set -euo pipefail
-          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
+
+          P="$PROJECT_ROOT"
+
+          BUILD_FILE="$P/app/build.gradle"
+
+          test -f "$BUILD_FILE"
+
+          grep -Fq "applicationId 'com.groupfinance.app'" "$BUILD_FILE"
+
+          CURRENT_VERSION_CODE="$(
+            grep -E "^[[:space:]]*versionCode[[:space:]]+[0-9]+" "$BUILD_FILE" \
+            | head -n 1 \
+            | grep -oE '[0-9]+' \
+            | head -n 1
+          )"
+
+          if [ -z "$CURRENT_VERSION_CODE" ]; then
+            echo "ERROR: versionCode was not found."
+            exit 1
+          fi
+
+          echo "Current source versionCode: $CURRENT_VERSION_CODE"
+          echo "New update versionCode: $VERSION_CODE"
+
+          if [ "$VERSION_CODE" -le "$CURRENT_VERSION_CODE" ]; then
+            echo "ERROR: New versionCode must be greater than source versionCode."
+            exit 1
+          fi
+
+          echo "Application ID: OK"
+          echo "Version upgrade requirement: OK"
+
+
+      # ============================================================
+      # 6. التحقق من البيانات والتخزين قبل أي تعديل
+      # ============================================================
+      - name: Verify data preservation markers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          H="$PROJECT_ROOT/app/src/main/assets/index.html"
+
+          test -f "$H"
+
+          grep -Fq "const GROUP_KEY='group_fin_groups_v5'" "$H"
+
+          grep -Fq "const V8_DATA_SEED='v8-data-seed-2026-09-16'" "$H"
+
+          grep -Fq "localStorage.getItem(V8_DATA_SEED)!=='1'" "$H"
+
+          grep -Fq "function save()" "$H"
+
+          # لا نسمح بإضافة آلية تمسح قاعدة البيانات عند بدء التحديث
+          if grep -Eq \
+            "localStorage\.clear\(|indexedDB\.deleteDatabase\(|clearData\(" \
+            "$H"; then
+
+            echo "ERROR: Destructive data-clearing code was detected."
+            exit 1
+          fi
+
+          echo "Existing database/storage preservation markers: OK"
+
+
+      # ============================================================
+      # 7. التحقق من الإضافات الأربع
+      # ============================================================
+      - name: Verify four requested features
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          P="$PROJECT_ROOT"
+
           H="$P/app/src/main/assets/index.html"
           J="$P/app/src/main/java/com/groupfinance/app/MainActivity.java"
 
+          # --------------------------------------------------------
+          # الإضافة الأولى: إجمالي المتبقي من التمويلات
+          # --------------------------------------------------------
           grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
+
+          # --------------------------------------------------------
+          # الإضافة الثانية: وظائف التمويلات والسحوبات
+          # --------------------------------------------------------
           grep -Fq "nav('loans')" "$H"
           grep -Fq "nav('withdrawals')" "$H"
+
+          # --------------------------------------------------------
+          # الإضافة الثالثة: إجماليات الطوارئ والتشغيلية
+          # --------------------------------------------------------
+          grep -Fq 'function renderFunds()' "$H"
+          grep -Fq 'r.emergency' "$H"
+          grep -Fq 'r.operation' "$H"
+
+          # --------------------------------------------------------
+          # الإضافة الرابعة: التقارير والطباعة والمشاركة
+          # --------------------------------------------------------
+          grep -Fq 'function renderReports()' "$H"
           grep -Fq 'printMemberReport' "$H"
           grep -Fq 'shareMemberReport' "$H"
           grep -Fq 'printFinancialReport' "$H"
           grep -Fq 'shareFinancialReport' "$H"
           grep -Fq 'Android.printPage' "$H"
           grep -Fq 'Android.sharePdf' "$H"
-          grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
-          grep -Fq 'function renderFunds()' "$H"
-          grep -Fq 'function renderReports()' "$H"
+
+          # --------------------------------------------------------
+          # وظائف أساسية موجودة
+          # --------------------------------------------------------
           grep -Fq 'function renderDashboard()' "$H"
+          grep -Fq 'function openMember' "$H"
+          grep -Fq 'function memberSavings' "$H"
+          grep -Fq 'function loanStats' "$H"
+          grep -Fq 'function sumFund' "$H"
+          grep -Fq 'function exportData' "$H"
+          grep -Fq 'function importData' "$H"
+          grep -Fq 'function save()' "$H"
+
+          # --------------------------------------------------------
+          # الاجتماعات
+          # --------------------------------------------------------
           grep -Fq 'db.meetings.reduce' "$H"
-          grep -Fq 'r.emergency' "$H"
-          grep -Fq 'r.operation' "$H"
+
+          # --------------------------------------------------------
+          # FileProvider / PDF
+          # --------------------------------------------------------
           grep -Fq 'androidx.core.content.FileProvider' "$J"
           grep -Fq 'public void printPage' "$J"
           grep -Fq 'public void sharePdf' "$J"
           grep -Fq 'createAndSharePdf' "$J"
+
           test -f "$P/app/src/main/res/xml/file_paths.xml"
 
-          # Data-preservation checks: the app still uses the existing V5 group/localStorage
-          # database and the one-time seed flag; normal updates do not replace current data.
-          grep -Fq "const GROUP_KEY='group_fin_groups_v5'" "$H"
-          grep -Fq "const V8_DATA_SEED='v8-data-seed-2026-09-16'" "$H"
-          grep -Fq "localStorage.getItem(V8_DATA_SEED)!=='1'" "$H"
-          grep -Fq "function save()" "$H"
+          echo "Four requested features: VERIFIED"
 
-          echo "Four features + data preservation markers: OK"
 
+      # ============================================================
+      # 8. فحص JavaScript بالكامل
+      # ============================================================
       - name: Verify JavaScript syntax
         shell: bash
         run: |
           set -euo pipefail
-          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
-          node - "$P/app/src/main/assets/index.html" <<'NODE'
+
+          H="$PROJECT_ROOT/app/src/main/assets/index.html"
+
+          node - "$H" <<'NODE'
           const fs = require('fs');
+
           const file = process.argv[2];
           const html = fs.readFileSync(file, 'utf8');
-          const scripts = [...html.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)]
-            .map(m => m[1]).filter(x => x.trim());
-          if (!scripts.length) throw new Error('No JavaScript found');
+
+          const scripts = [
+            ...html.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)
+          ]
+          .map(m => m[1])
+          .filter(x => x.trim());
+
+          if (!scripts.length) {
+            throw new Error('No JavaScript blocks were found.');
+          }
+
           scripts.forEach((code, i) => {
-            try { new Function(code); }
-            catch (e) { throw new Error(`JavaScript syntax error in script ${i + 1}: ${e.message}`); }
+            try {
+              new Function(code);
+            } catch (e) {
+              throw new Error(
+                `JavaScript syntax error in script ${i + 1}: ${e.message}`
+              );
+            }
           });
+
           const required = [
-            'renderDashboard','renderFunds','renderReports','openMember','memberSavings',
-            'loanStats','sumFund','exportData','importData','save','printMemberReport',
-            'shareMemberReport','printFinancialReport','shareFinancialReport'
-          ];
-          const defs = new Set();
-          for (const m of html.matchAll(/(?:function|async function)\s+([A-Za-z_$][\w$]*)/g)) defs.add(m[1]);
-          for (const m of html.matchAll(/window\.([A-Za-z_$][\w$]*)\s*=/g)) defs.add(m[1]);
-          const missing = required.filter(x => !defs.has(x));
-          if (missing.length) throw new Error('Missing required functions: ' + missing.join(', '));
-          console.log(`JavaScript syntax + required functions: OK (${scripts.length} script block(s))`);
-          NODE
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Create fixed signing properties
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
-          test -n "$ANDROID_KEYSTORE_BASE64"
-          test -n "$ANDROID_KEYSTORE_PASSWORD"
-          test -n "$ANDROID_KEY_PASSWORD"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$P/groupfinance-v8.keystore"
-          test -s "$P/groupfinance-v8.keystore"
-          keytool -list -keystore "$P/groupfinance-v8.keystore" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias groupfinance-v8 >/dev/null
-          cat > "$P/signing.properties" <<EOF
-          storeFile=$P/groupfinance-v8.keystore
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyAlias=groupfinance-v8
-          keyPassword=$ANDROID_KEY_PASSWORD
-          EOF
-          chmod 600 "$P/groupfinance-v8.keystore" "$P/signing.properties"
-          echo "Fixed signing key prepared."
-
-      - name: Verify application identity and version
-        shell: bash
-        run: |
-          set -euo pipefail
-          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
-          grep -Fq "applicationId 'com.groupfinance.app'" "$P/app/build.gradle"
-          grep -Fq 'versionCode 14' "$P/app/build.gradle"
-          grep -Fq "versionName '8.0.2'" "$P/app/build.gradle"
-          echo "Application identity/version: OK"
-
-      - name: Build release APK
-        shell: bash
-        working-directory: ${{ runner.temp }}/GroupFinanceV8_UPDATE_4_FEATURES_FINAL
-        run: |
-          set -euo pipefail
-          gradle --no-daemon clean assembleRelease
-
-      - name: Verify APK signature and fixed certificate
-        shell: bash
-        run: |
-          set -euo pipefail
-          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
-          APK="$(find "$P/app/build/outputs/apk/release" -type f -name '*.apk' | head -n 1)"
-          test -n "$APK"
-          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -x "$APKSIGNER"
-          "$APKSIGNER" verify --verbose --print-certs "$APK"
-          CERT="$(keytool -printcert -jarfile "$APK" | awk -F': ' '/SHA256:/{print $2; exit}')"
-          echo "APK certificate SHA-256: $CERT"
-          test "$CERT" = "$EXPECTED_CERT_SHA256"
-          echo "APK fixed signing identity: VERIFIED"
-
-      - name: Package final APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          P="$RUNNER_TEMP/GroupFinanceV8_UPDATE_4_FEATURES_FINAL"
-          mkdir -p "$RUNNER_TEMP/final"
-          cp "$P/app/build/outputs/apk/release/app-release.apk" "$RUNNER_TEMP/final/GroupFinance-V8-UPDATE-4-FEATURES-FINAL.apk"
-          sha256sum "$RUNNER_TEMP/final/GroupFinance-V8-UPDATE-4-FEATURES-FINAL.apk" > "$RUNNER_TEMP/final/SHA256.txt"
-
-      - name: Upload final APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: GroupFinance-V8-UPDATE-4-FEATURES-FINAL
-          path: ${{ runner.temp }}/final/
-          if-no-files-found: error
-          retention-days: 30
+            'renderDashboard',
+            'renderFunds',
+            'renderReports',
+            'openMember',
+            'memberSavings',
+            'loanStats',
+            'sumFund',
+            'exportData',
+            'importData',
+            'save',
+            'printMemberReport',
+            'shareMemberReport',
+            'printFinancialReport',
+           
