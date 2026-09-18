@@ -12,359 +12,360 @@ permissions:
 
 env:
   SOURCE_ZIP_NAME: GroupFinanceV8_UPDATE_4_FEATURES_FINAL_FIXED.zip
+
   EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
+
   APPLICATION_ID: com.groupfinance.app
   VERSION_CODE: 15
   VERSION_NAME: 8.0.2
 
 jobs:
-
-  build-v8-update:
+  build:
     name: Build GroupFinance V8 Update - Preserve Existing Data
     runs-on: ubuntu-latest
 
     steps:
 
-      # ============================================================
-      # 1. تحميل ملفات المستودع
-      # ============================================================
+      # ---------------------------------------------------------
+      # 1. Download repository
+      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-
-      # ============================================================
-      # 2. البحث عن ملف المصدر الحقيقي
-      # ============================================================
+      # ---------------------------------------------------------
+      # 2. Locate the exact source ZIP
+      # ---------------------------------------------------------
       - name: Locate source ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Searching for source ZIP:"
+          echo "Searching repository for:"
           echo "$SOURCE_ZIP_NAME"
 
-          mapfile -t FOUND_ZIPS < <(
+          mapfile -t ZIP_FILES < <(
             find "$GITHUB_WORKSPACE" \
               -type f \
               -name "$SOURCE_ZIP_NAME" \
-              -not -path '*/.git/*' \
-              -print
+              -not -path "*/.git/*"
           )
 
-          if [ "${#FOUND_ZIPS[@]}" -eq 0 ]; then
-            echo ""
-            echo "ERROR: Source ZIP was not found."
-            echo ""
-            echo "Expected file:"
-            echo "$SOURCE_ZIP_NAME"
-            echo ""
-            echo "Files currently in repository:"
-            find "$GITHUB_WORKSPACE" \
-              -maxdepth 4 \
-              -type f \
-              -print | sort
+          if [ "${#ZIP_FILES[@]}" -eq 0 ]; then
+            echo "::error::Source ZIP was not found: $SOURCE_ZIP_NAME"
+            echo "Repository files:"
+            find "$GITHUB_WORKSPACE" -maxdepth 5 -type f | sort
             exit 1
           fi
 
-          if [ "${#FOUND_ZIPS[@]}" -gt 1 ]; then
-            echo "ERROR: More than one source ZIP was found:"
-            printf '%s\n' "${FOUND_ZIPS[@]}"
-            echo ""
-            echo "Keep only ONE copy of:"
-            echo "$SOURCE_ZIP_NAME"
+          if [ "${#ZIP_FILES[@]}" -gt 1 ]; then
+            echo "::error::More than one source ZIP was found."
+            printf '%s\n' "${ZIP_FILES[@]}"
             exit 1
           fi
 
-          SOURCE_ZIP="${FOUND_ZIPS[0]}"
+          SOURCE_ZIP="${ZIP_FILES[0]}"
 
           echo "SOURCE_ZIP=$SOURCE_ZIP" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "Source ZIP found:"
+          echo "Found source ZIP:"
           echo "$SOURCE_ZIP"
 
+          ls -lh "$SOURCE_ZIP"
 
-      # ============================================================
-      # 3. فحص سلامة ZIP
-      # ============================================================
-      - name: Verify source ZIP integrity
+      # ---------------------------------------------------------
+      # 3. Validate ZIP before extraction
+      # ---------------------------------------------------------
+      - name: Validate source ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f "$SOURCE_ZIP"
+          echo "Testing ZIP integrity..."
 
           unzip -tq "$SOURCE_ZIP"
 
-          echo "Source ZIP integrity: OK"
+          echo "ZIP integrity OK."
 
-
-      # ============================================================
-      # 4. استخراج المشروع
-      # ============================================================
+      # ---------------------------------------------------------
+      # 4. Extract source project
+      # ---------------------------------------------------------
       - name: Extract source project
         shell: bash
         run: |
           set -euo pipefail
 
-          PROJECT_DIR="$RUNNER_TEMP/GroupFinanceV8_SOURCE"
+          rm -rf "$RUNNER_TEMP/groupfinance_source"
+          mkdir -p "$RUNNER_TEMP/groupfinance_source"
 
-          rm -rf "$PROJECT_DIR"
-          mkdir -p "$PROJECT_DIR"
+          unzip -q "$SOURCE_ZIP" \
+            -d "$RUNNER_TEMP/groupfinance_source"
 
-          unzip -q "$SOURCE_ZIP" -d "$PROJECT_DIR"
+          echo "Extracted source tree:"
+          find "$RUNNER_TEMP/groupfinance_source" \
+            -maxdepth 4 \
+            -type f \
+            | sort \
+            | head -300
 
-          echo "Extracted files:"
-          find "$PROJECT_DIR" -maxdepth 3 -type f -print | sort | head -200
+          PROJECT_ROOT=""
 
-          # --------------------------------------------------------
-          # تحديد جذر مشروع Android الحقيقي
-          # --------------------------------------------------------
+          if [ -f "$RUNNER_TEMP/groupfinance_source/settings.gradle" ] || \
+             [ -f "$RUNNER_TEMP/groupfinance_source/settings.gradle.kts" ]; then
 
-          if [ -f "$PROJECT_DIR/settings.gradle" ] || \
-             [ -f "$PROJECT_DIR/settings.gradle.kts" ]; then
-
-            PROJECT_ROOT="$PROJECT_DIR"
+            PROJECT_ROOT="$RUNNER_TEMP/groupfinance_source"
 
           else
 
-            mapfile -t ROOTS < <(
-              find "$PROJECT_DIR" \
-                -mindepth 1 \
-                -maxdepth 2 \
+            while IFS= read -r SETTINGS_FILE; do
+              CANDIDATE="$(dirname "$SETTINGS_FILE")"
+
+              if [ -f "$CANDIDATE/settings.gradle" ] || \
+                 [ -f "$CANDIDATE/settings.gradle.kts" ]; then
+
+                PROJECT_ROOT="$CANDIDATE"
+                break
+              fi
+
+            done < <(
+              find "$RUNNER_TEMP/groupfinance_source" \
                 -type f \
                 -name "settings.gradle" -o -name "settings.gradle.kts" \
                 -print
             )
 
-            if [ "${#ROOTS[@]}" -eq 0 ]; then
-              echo "ERROR: Android settings.gradle was not found."
-              exit 1
-            fi
-
-            if [ "${#ROOTS[@]}" -gt 1 ]; then
-              echo "ERROR: More than one Android project root was detected:"
-              printf '%s\n' "${ROOTS[@]}"
-              exit 1
-            fi
-
-            SETTINGS_FILE="${ROOTS[0]}"
-            PROJECT_ROOT="$(dirname "$SETTINGS_FILE")"
           fi
 
-          test -f "$PROJECT_ROOT/settings.gradle" || \
-          test -f "$PROJECT_ROOT/settings.gradle.kts"
-
-          test -d "$PROJECT_ROOT/app"
-
-          test -f "$PROJECT_ROOT/app/build.gradle" || \
-          test -f "$PROJECT_ROOT/app/build.gradle.kts"
-
-          test -f "$PROJECT_ROOT/app/src/main/assets/index.html"
-
-          test -f "$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "::error::Android Gradle project root was not found."
+            find "$RUNNER_TEMP/groupfinance_source" \
+              -maxdepth 6 \
+              -type f \
+              | sort
+            exit 1
+          fi
 
           echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
 
-          echo ""
           echo "Android project root:"
           echo "$PROJECT_ROOT"
 
-
-      # ============================================================
-      # 5. التحقق من بنية المشروع والهوية
-      # ============================================================
+      # ---------------------------------------------------------
+      # 5. Verify Android project identity
+      # ---------------------------------------------------------
       - name: Verify Android project identity
         shell: bash
         run: |
           set -euo pipefail
 
-          P="$PROJECT_ROOT"
+          APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
+          APP_GRADLE_KTS="$PROJECT_ROOT/app/build.gradle.kts"
 
-          BUILD_FILE="$P/app/build.gradle"
+          if [ -f "$APP_GRADLE" ]; then
+            APP_FILE="$APP_GRADLE"
+          elif [ -f "$APP_GRADLE_KTS" ]; then
+            APP_FILE="$APP_GRADLE_KTS"
+          else
+            echo "::error::app/build.gradle or app/build.gradle.kts was not found."
+            exit 1
+          fi
 
-          test -f "$BUILD_FILE"
+          echo "Using:"
+          echo "$APP_FILE"
 
-          grep -Fq "applicationId 'com.groupfinance.app'" "$BUILD_FILE"
+          echo "Checking application ID..."
+
+          if ! grep -Eq \
+            "applicationId[[:space:]]*[=(]?[[:space:]]*['\"]${APPLICATION_ID}['\"]" \
+            "$APP_FILE"; then
+
+            echo "::error::Application ID is not $APPLICATION_ID"
+            grep -n "applicationId" "$APP_FILE" || true
+            exit 1
+          fi
+
+          echo "Application ID OK:"
+          echo "$APPLICATION_ID"
+
+          echo "Checking version..."
 
           CURRENT_VERSION_CODE="$(
-            grep -E "^[[:space:]]*versionCode[[:space:]]+[0-9]+" "$BUILD_FILE" \
-            | head -n 1 \
-            | grep -oE '[0-9]+' \
-            | head -n 1
+            grep -Eo \
+              "versionCode[[:space:]]+[0-9]+" \
+              "$APP_FILE" \
+              | head -1 \
+              | grep -Eo "[0-9]+" \
+              || true
           )"
 
-          if [ -z "$CURRENT_VERSION_CODE" ]; then
-            echo "ERROR: versionCode was not found."
-            exit 1
+          if [ -n "$CURRENT_VERSION_CODE" ]; then
+            echo "Source versionCode: $CURRENT_VERSION_CODE"
+            echo "Target versionCode: $VERSION_CODE"
+
+            if [ "$CURRENT_VERSION_CODE" -ge "$VERSION_CODE" ]; then
+              echo "::error::Target versionCode must be higher than the source versionCode."
+              exit 1
+            fi
           fi
 
-          echo "Current source versionCode: $CURRENT_VERSION_CODE"
-          echo "New update versionCode: $VERSION_CODE"
+          echo "Android project identity OK."
 
-          if [ "$VERSION_CODE" -le "$CURRENT_VERSION_CODE" ]; then
-            echo "ERROR: New versionCode must be greater than source versionCode."
-            exit 1
-          fi
-
-          echo "Application ID: OK"
-          echo "Version upgrade requirement: OK"
-
-
-      # ============================================================
-      # 6. التحقق من البيانات والتخزين قبل أي تعديل
-      # ============================================================
+      # ---------------------------------------------------------
+      # 6. Verify data preservation markers
+      # ---------------------------------------------------------
       - name: Verify data preservation markers
         shell: bash
         run: |
           set -euo pipefail
 
-          H="$PROJECT_ROOT/app/src/main/assets/index.html"
+          echo "Checking source for the existing data system..."
 
-          test -f "$H"
+          HTML_FILES=()
 
-          grep -Fq "const GROUP_KEY='group_fin_groups_v5'" "$H"
+          while IFS= read -r FILE; do
+            HTML_FILES+=("$FILE")
+          done < <(
+            find "$PROJECT_ROOT/app/src/main/assets" \
+              -type f \
+              -name "*.html" -o -name "*.js" \
+              -print 2>/dev/null
+          )
 
-          grep -Fq "const V8_DATA_SEED='v8-data-seed-2026-09-16'" "$H"
-
-          grep -Fq "localStorage.getItem(V8_DATA_SEED)!=='1'" "$H"
-
-          grep -Fq "function save()" "$H"
-
-          # لا نسمح بإضافة آلية تمسح قاعدة البيانات عند بدء التحديث
-          if grep -Eq \
-            "localStorage\.clear\(|indexedDB\.deleteDatabase\(|clearData\(" \
-            "$H"; then
-
-            echo "ERROR: Destructive data-clearing code was detected."
+          if [ "${#HTML_FILES[@]}" -eq 0 ]; then
+            echo "::error::No HTML/JavaScript application files were found in assets."
             exit 1
           fi
 
-          echo "Existing database/storage preservation markers: OK"
+          FOUND_GROUP_KEY=0
+          FOUND_SAVE=0
+          FOUND_SEED=0
 
+          for FILE in "${HTML_FILES[@]}"; do
 
-      # ============================================================
-      # 7. التحقق من الإضافات الأربع
-      # ============================================================
+            if grep -Fq "group_fin_groups_v5" "$FILE"; then
+              FOUND_GROUP_KEY=1
+            fi
+
+            if grep -Fq "function save()" "$FILE"; then
+              FOUND_SAVE=1
+            fi
+
+            if grep -Fq "v8-data-seed-2026-09-16" "$FILE"; then
+              FOUND_SEED=1
+            fi
+
+          done
+
+          if [ "$FOUND_GROUP_KEY" -ne 1 ]; then
+            echo "::error::Existing storage key group_fin_groups_v5 was not found."
+            exit 1
+          fi
+
+          if [ "$FOUND_SAVE" -ne 1 ]; then
+            echo "::error::Existing save() function was not found."
+            exit 1
+          fi
+
+          if [ "$FOUND_SEED" -ne 1 ]; then
+            echo "::error::Existing V8 data seed marker was not found."
+            exit 1
+          fi
+
+          echo "Checking for destructive data reset commands..."
+
+          if grep -RInE \
+            "localStorage[.]clear[[:space:]]*\(" \
+            "$PROJECT_ROOT/app/src/main/assets" \
+            --include="*.html" \
+            --include="*.js"; then
+
+            echo "::error::localStorage.clear() was found. This could erase existing data."
+            exit 1
+          fi
+
+          if grep -RInE \
+            "indexedDB[.]deleteDatabase[[:space:]]*\(" \
+            "$PROJECT_ROOT/app/src/main/assets" \
+            --include="*.html" \
+            --include="*.js"; then
+
+            echo "::error::indexedDB.deleteDatabase() was found."
+            exit 1
+          fi
+
+          if grep -RInE \
+            "clearData[[:space:]]*\(" \
+            "$PROJECT_ROOT/app/src/main/assets" \
+            --include="*.html" \
+            --include="*.js"; then
+
+            echo "::error::clearData() was found."
+            exit 1
+          fi
+
+          echo "Data preservation markers OK."
+
+      # ---------------------------------------------------------
+      # 7. Verify the four requested features
+      # ---------------------------------------------------------
       - name: Verify four requested features
         shell: bash
         run: |
           set -euo pipefail
 
-          P="$PROJECT_ROOT"
+          ASSETS="$PROJECT_ROOT/app/src/main/assets"
 
-          H="$P/app/src/main/assets/index.html"
-          J="$P/app/src/main/java/com/groupfinance/app/MainActivity.java"
+          echo "Checking requested V8 features..."
 
-          # --------------------------------------------------------
-          # الإضافة الأولى: إجمالي المتبقي من التمويلات
-          # --------------------------------------------------------
-          grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
+          REQUIRED_TEXTS=(
+            "إجمالي المتبقي من التمويلات"
+            "إجمالي المدخرات تاريخيًا"
+            "إجمالي المصروف منه"
+            "الرصيد المتبقي"
+          )
 
-          # --------------------------------------------------------
-          # الإضافة الثانية: وظائف التمويلات والسحوبات
-          # --------------------------------------------------------
-          grep -Fq "nav('loans')" "$H"
-          grep -Fq "nav('withdrawals')" "$H"
+          for TEXT in "${REQUIRED_TEXTS[@]}"; do
 
-          # --------------------------------------------------------
-          # الإضافة الثالثة: إجماليات الطوارئ والتشغيلية
-          # --------------------------------------------------------
-          grep -Fq 'function renderFunds()' "$H"
-          grep -Fq 'r.emergency' "$H"
-          grep -Fq 'r.operation' "$H"
+            if ! grep -RInF \
+              "$TEXT" \
+              "$ASSETS" \
+              --include="*.html" \
+              --include="*.js" \
+              >/dev/null; then
 
-          # --------------------------------------------------------
-          # الإضافة الرابعة: التقارير والطباعة والمشاركة
-          # --------------------------------------------------------
-          grep -Fq 'function renderReports()' "$H"
-          grep -Fq 'printMemberReport' "$H"
-          grep -Fq 'shareMemberReport' "$H"
-          grep -Fq 'printFinancialReport' "$H"
-          grep -Fq 'shareFinancialReport' "$H"
-          grep -Fq 'Android.printPage' "$H"
-          grep -Fq 'Android.sharePdf' "$H"
+              echo "::error::Required feature text was not found: $TEXT"
+              exit 1
+            fi
 
-          # --------------------------------------------------------
-          # وظائف أساسية موجودة
-          # --------------------------------------------------------
-          grep -Fq 'function renderDashboard()' "$H"
-          grep -Fq 'function openMember' "$H"
-          grep -Fq 'function memberSavings' "$H"
-          grep -Fq 'function loanStats' "$H"
-          grep -Fq 'function sumFund' "$H"
-          grep -Fq 'function exportData' "$H"
-          grep -Fq 'function importData' "$H"
-          grep -Fq 'function save()' "$H"
+            echo "Found: $TEXT"
 
-          # --------------------------------------------------------
-          # الاجتماعات
-          # --------------------------------------------------------
-          grep -Fq 'db.meetings.reduce' "$H"
+          done
 
-          # --------------------------------------------------------
-          # FileProvider / PDF
-          # --------------------------------------------------------
-          grep -Fq 'androidx.core.content.FileProvider' "$J"
-          grep -Fq 'public void printPage' "$J"
-          grep -Fq 'public void sharePdf' "$J"
-          grep -Fq 'createAndSharePdf' "$J"
+          echo "Checking required function names..."
 
-          test -f "$P/app/src/main/res/xml/file_paths.xml"
+          REQUIRED_FUNCTIONS=(
+            "renderDashboard"
+            "renderFunds"
+            "renderReports"
+            "openMember"
+            "memberSavings"
+            "loanStats"
+            "sumFund"
+            "exportData"
+            "importData"
+            "save"
+            "printMemberReport"
+            "shareMemberReport"
+            "printFinancialReport"
+          )
 
-          echo "Four requested features: VERIFIED"
+          for FUNCTION_NAME in "${REQUIRED_FUNCTIONS[@]}"; do
 
+            if ! grep -RInE \
+              "function[[:space:]]+${FUNCTION_NAME}[[:space:]]*[(]" \
+              "$ASSETS" \
+              --include="*.html" \
+              --include="*.js" \
+              >/dev/null; then
 
-      # ============================================================
-      # 8. فحص JavaScript بالكامل
-      # ============================================================
-      - name: Verify JavaScript syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          H="$PROJECT_ROOT/app/src/main/assets/index.html"
-
-          node - "$H" <<'NODE'
-          const fs = require('fs');
-
-          const file = process.argv[2];
-          const html = fs.readFileSync(file, 'utf8');
-
-          const scripts = [
-            ...html.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)
-          ]
-          .map(m => m[1])
-          .filter(x => x.trim());
-
-          if (!scripts.length) {
-            throw new Error('No JavaScript blocks were found.');
-          }
-
-          scripts.forEach((code, i) => {
-            try {
-              new Function(code);
-            } catch (e) {
-              throw new Error(
-                `JavaScript syntax error in script ${i + 1}: ${e.message}`
-              );
-            }
-          });
-
-          const required = [
-            'renderDashboard',
-            'renderFunds',
-            'renderReports',
-            'openMember',
-            'memberSavings',
-            'loanStats',
-            'sumFund',
-            'exportData',
-            'importData',
-            'save',
-            'printMemberReport',
-            'shareMemberReport',
-            'printFinancialReport',
-           
+              echo "::error::Required function was not found: $FUNCTION_NAME"
+              exit 1
