@@ -8,7 +8,7 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   SOURCE_ZIP_NAME: GroupFinanceV8_UPDATE_4_FEATURES_FINAL_FIXED.zip
@@ -597,10 +597,45 @@ jobs:
 
           ls -lh "$FINAL"
 
-      - name: Upload final APK
+      - name: Upload final APK as GitHub Artifact
         uses: actions/upload-artifact@v4
         with:
           name: GroupFinance-V8-FINAL-UPDATE
           path: ${{ runner.temp }}/final
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish APK directly into GitHub repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DOWNLOAD_DIR="$GITHUB_WORKSPACE/downloads"
+
+          mkdir -p "$DOWNLOAD_DIR"
+
+          cp "$RELEASE_APK" \
+            "$DOWNLOAD_DIR/GroupFinance_V8_FINAL_UPDATE.apk"
+
+          sha256sum \
+            "$DOWNLOAD_DIR/GroupFinance_V8_FINAL_UPDATE.apk" \
+            > "$DOWNLOAD_DIR/GroupFinance_V8_FINAL_UPDATE.sha256"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add downloads/GroupFinance_V8_FINAL_UPDATE.apk
+          git add downloads/GroupFinance_V8_FINAL_UPDATE.sha256
+
+          if git diff --cached --quiet; then
+            echo "No new APK files to commit."
+            exit 0
+          fi
+
+          git commit -m "Publish V8 APK for direct GitHub download [skip ci]"
+
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          echo "APK published directly into GitHub repository."
+          echo "Download path:"
+          echo "downloads/GroupFinance_V8_FINAL_UPDATE.apk"
