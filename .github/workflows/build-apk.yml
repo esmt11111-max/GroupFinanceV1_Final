@@ -11,38 +11,23 @@ permissions:
   contents: write
 
 env:
-  SOURCE_ZIP_NAME: GroupFinanceV8_NATIVE_RESTORE_FINAL_FIXED.zip
-
+  SOURCE_ZIP_NAME: GroupFinanceV8_NATIVE_RESTORE_COMPILE_FIXED.zip
   EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
-
   APPLICATION_ID: com.groupfinance.app
-
   VERSION_CODE: 16
   VERSION_NAME: 8.0.3
 
 jobs:
-
   build:
-
     name: Build GroupFinance V8 Native Restore - Preserve Existing Data
-
     runs-on: ubuntu-latest
 
     steps:
-
-      # ------------------------------------------------------------
-      # 1. تحميل المستودع
-      # ------------------------------------------------------------
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-
-      # ------------------------------------------------------------
-      # 2. العثور على ملف ZIP المصدر
-      # ------------------------------------------------------------
 
       - name: Locate source ZIP
         shell: bash
@@ -58,22 +43,15 @@ jobs:
           )"
 
           if [ -z "$SOURCE_ZIP" ]; then
-            echo "::error::Source ZIP not found:"
-            echo "$SOURCE_ZIP_NAME"
+            echo "::error::Source ZIP not found: $SOURCE_ZIP_NAME"
             exit 1
           fi
 
           echo "SOURCE_ZIP=$SOURCE_ZIP" >> "$GITHUB_ENV"
 
-          echo "SOURCE ZIP FOUND:"
+          echo "Source ZIP found:"
           echo "$SOURCE_ZIP"
-
           ls -lh "$SOURCE_ZIP"
-
-
-      # ------------------------------------------------------------
-      # 3. فحص ZIP
-      # ------------------------------------------------------------
 
       - name: Validate source ZIP
         shell: bash
@@ -83,13 +61,7 @@ jobs:
           unzip -tq "$SOURCE_ZIP"
 
           echo "ZIP integrity: VERIFIED"
-
           sha256sum "$SOURCE_ZIP"
-
-
-      # ------------------------------------------------------------
-      # 4. استخراج المشروع
-      # ------------------------------------------------------------
 
       - name: Extract and locate Android project
         shell: bash
@@ -113,7 +85,6 @@ jobs:
           )"
 
           if [ -z "$INDEX_FILE" ]; then
-
             echo "::error::index.html not found."
 
             find "$EXTRACT" \
@@ -128,15 +99,7 @@ jobs:
 
           if [ ! -f "$PROJECT_ROOT/settings.gradle" ] &&
              [ ! -f "$PROJECT_ROOT/settings.gradle.kts" ]; then
-
             echo "::error::Gradle settings file not found."
-
-            find "$PROJECT_ROOT" \
-              -maxdepth 4 \
-              -type f \
-              | sort \
-              | head -200
-
             exit 1
           fi
 
@@ -147,13 +110,8 @@ jobs:
 
           echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
 
-          echo "ANDROID PROJECT:"
+          echo "Android project:"
           echo "$PROJECT_ROOT"
-
-
-      # ------------------------------------------------------------
-      # 5. التحقق من بيانات V8
-      # ------------------------------------------------------------
 
       - name: Verify V8 seed and source
         shell: bash
@@ -161,11 +119,8 @@ jobs:
           set -euo pipefail
 
           P="$PROJECT_ROOT"
-
           H="$P/app/src/main/assets/index.html"
-
           S="$P/app/src/main/assets/v8_seed_manifest.json"
-
           M="$P/app/src/main/AndroidManifest.xml"
 
           test -f "$H"
@@ -195,13 +150,12 @@ jobs:
           test "$MEETINGS" = "5"
 
           node - "$S" <<'NODE'
-          const fs = require("fs");
+          const fs=require("fs");
 
-          const file = process.argv[2];
+          const file=process.argv[2];
+          const text=fs.readFileSync(file,"utf8");
 
-          const text = fs.readFileSync(file, "utf8");
-
-          const requiredDates = [
+          const requiredDates=[
             "2024-10-08",
             "2024-11-08",
             "2024-12-08",
@@ -209,15 +163,12 @@ jobs:
             "2025-02-08"
           ];
 
-          for (const date of requiredDates) {
-
-            if (!text.includes(date)) {
-
+          for(const date of requiredDates){
+            if(!text.includes(date)){
               console.error(
                 "Required meeting date missing:",
                 date
               );
-
               process.exit(1);
             }
           }
@@ -228,11 +179,6 @@ jobs:
           NODE
 
           echo "V8 seed: VERIFIED"
-
-
-      # ------------------------------------------------------------
-      # 6. صور الاجتماعات
-      # ------------------------------------------------------------
 
       - name: Verify meeting source images
         shell: bash
@@ -252,11 +198,6 @@ jobs:
 
           echo "Meeting source images: VERIFIED"
 
-
-      # ------------------------------------------------------------
-      # 7. نظام البيانات الحالي
-      # ------------------------------------------------------------
-
       - name: Verify existing data system
         shell: bash
         run: |
@@ -265,17 +206,10 @@ jobs:
           H="$PROJECT_ROOT/app/src/main/assets/index.html"
 
           grep -Fq "group_fin_groups_v5" "$H"
-
           grep -Fq "v8-data-seed-2026-09-16" "$H"
-
           grep -Fq "function save()" "$H"
 
           echo "Existing V8 data system: VERIFIED"
-
-
-      # ------------------------------------------------------------
-      # 8. التحقق الحقيقي من إصلاح الاستعادة
-      # ------------------------------------------------------------
 
       - name: Verify native backup restore fix
         shell: bash
@@ -283,99 +217,27 @@ jobs:
           set -euo pipefail
 
           H="$PROJECT_ROOT/app/src/main/assets/index.html"
-
           J="$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
 
-          echo "Checking:"
-          echo "$J"
-          echo "$H"
-
-          test -f "$J"
           test -f "$H"
+          test -f "$J"
 
-          echo ""
-          echo "Checking MainActivity.java..."
+          echo "Checking Android native file picker..."
 
-          check_java() {
-            NAME="$1"
-            PATTERN="$2"
+          grep -Fq "Intent.ACTION_OPEN_DOCUMENT" "$J"
+          grep -Fq "Intent.CATEGORY_OPENABLE" "$J"
+          grep -Fq "FILE_CHOOSER" "$J"
+          grep -Fq "onActivityResult" "$J"
+          grep -Fq "setType" "$J"
+          grep -Fq "takePersistableUriPermission" "$J"
 
-            if grep -Fq "$PATTERN" "$J"; then
-              echo "PASS: $NAME"
-            else
-              echo "::error::FAIL: $NAME"
-              echo "Missing pattern:"
-              echo "$PATTERN"
-              echo ""
-              echo "Relevant MainActivity.java:"
-              grep -nE \
-                "Intent|FileChooser|onActivityResult|gfbak|ACTION_OPEN_DOCUMENT|CATEGORY_OPENABLE|setType|JSON" \
-                "$J" \
-                || true
-              exit 1
-            fi
-          }
+          echo "Checking backup import..."
 
-          check_java \
-            "ACTION_OPEN_DOCUMENT" \
-            "Intent.ACTION_OPEN_DOCUMENT"
+          grep -Fq ".gfbak" "$H"
+          grep -Fq "JSON.parse" "$H"
+          grep -Fq "importData" "$H"
 
-          check_java \
-            "CATEGORY_OPENABLE" \
-            "Intent.CATEGORY_OPENABLE"
-
-          check_java \
-            "FILE_CHOOSER" \
-            "FILE_CHOOSER"
-
-          check_java \
-            "onActivityResult" \
-            "onActivityResult"
-
-          check_java \
-            "setType" \
-            "setType"
-
-          check_java \
-            "takePersistableUriPermission" \
-            "takePersistableUriPermission"
-
-          echo ""
-          echo "Checking index.html..."
-
-          check_html() {
-            NAME="$1"
-            PATTERN="$2"
-
-            if grep -Fq "$PATTERN" "$H"; then
-              echo "PASS: $NAME"
-            else
-              echo "::error::FAIL: $NAME"
-              echo "Missing pattern:"
-              echo "$PATTERN"
-              exit 1
-            fi
-          }
-
-          check_html \
-            "GFBACK extension" \
-            ".gfbak"
-
-          check_html \
-            "JSON parsing" \
-            "JSON.parse"
-
-          check_html \
-            "Import function" \
-            "importData"
-
-          echo ""
-          echo "Native backup restore fix: VERIFIED"
-
-
-      # ------------------------------------------------------------
-      # 9. منع حذف بيانات المستخدم
-      # ------------------------------------------------------------
+          echo "Native backup restore: VERIFIED"
 
       - name: Verify no destructive data reset
         shell: bash
@@ -406,60 +268,39 @@ jobs:
 
           echo "No destructive data reset detected."
 
-
-      # ------------------------------------------------------------
-      # 10. التحقق من الوظائف الأربع
-      # ------------------------------------------------------------
-
       - name: Verify four requested features
         shell: bash
         run: |
           set -euo pipefail
 
           H="$PROJECT_ROOT/app/src/main/assets/index.html"
-
           J="$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
 
-          grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
+          grep -Fq "إجمالي المتبقي من التمويلات" "$H"
+          grep -Fq "function renderFunds()" "$H"
 
-          grep -Fq 'function renderFunds()' "$H"
+          grep -Fq "r.emergency" "$H"
+          grep -Fq "r.operation" "$H"
 
-          grep -Fq 'r.emergency' "$H"
+          grep -Fq "function renderDashboard()" "$H"
+          grep -Fq "function renderReports()" "$H"
 
-          grep -Fq 'r.operation' "$H"
+          grep -Fq "printMemberReport" "$H"
+          grep -Fq "shareMemberReport" "$H"
+          grep -Fq "printFinancialReport" "$H"
+          grep -Fq "shareFinancialReport" "$H"
 
-          grep -Fq 'function renderDashboard()' "$H"
+          grep -Fq "Android.printPage" "$H"
+          grep -Fq "Android.sharePdf" "$H"
 
-          grep -Fq 'function renderReports()' "$H"
-
-          grep -Fq 'printMemberReport' "$H"
-
-          grep -Fq 'shareMemberReport' "$H"
-
-          grep -Fq 'printFinancialReport' "$H"
-
-          grep -Fq 'shareFinancialReport' "$H"
-
-          grep -Fq 'Android.printPage' "$H"
-
-          grep -Fq 'Android.sharePdf' "$H"
-
-          grep -Fq 'androidx.core.content.FileProvider' "$J"
-
-          grep -Fq 'public void printPage' "$J"
-
-          grep -Fq 'public void sharePdf' "$J"
-
-          grep -Fq 'createAndSharePdf' "$J"
+          grep -Fq "androidx.core.content.FileProvider" "$J"
+          grep -Fq "public void printPage" "$J"
+          grep -Fq "public void sharePdf" "$J"
+          grep -Fq "createAndSharePdf" "$J"
 
           test -f "$PROJECT_ROOT/app/src/main/res/xml/file_paths.xml"
 
           echo "Four requested features: VERIFIED"
-
-
-      # ------------------------------------------------------------
-      # 11. فحص JavaScript
-      # ------------------------------------------------------------
 
       - name: Verify JavaScript syntax
         shell: bash
@@ -469,54 +310,43 @@ jobs:
           HTML="$PROJECT_ROOT/app/src/main/assets/index.html"
 
           node - "$HTML" <<'NODE'
-          const fs = require("fs");
+          const fs=require("fs");
 
-          const file = process.argv[2];
+          const file=process.argv[2];
+          const html=fs.readFileSync(file,"utf8");
 
-          const html = fs.readFileSync(file, "utf8");
-
-          const scripts = [
+          const scripts=[
             ...html.matchAll(
               /<script(?:[^>]*)>([\s\S]*?)<\/script>/gi
             )
           ]
-          .map(x => x[1].trim())
-          .filter(x => x.length);
+          .map(x=>x[1].trim())
+          .filter(x=>x.length);
 
-          if (!scripts.length) {
+          if(!scripts.length){
             throw new Error(
               "No JavaScript blocks were found."
             );
           }
 
-          scripts.forEach((code,index) => {
-
-            try {
-
+          scripts.forEach((code,index)=>{
+            try{
               new Function(code);
-
-            } catch(error) {
-
+            }catch(error){
               throw new Error(
-                "JavaScript syntax error in block " +
-                (index + 1) +
-                ": " +
+                "JavaScript syntax error in block "+
+                (index+1)+": "+
                 error.message
               );
             }
           });
 
           console.log(
-            "JavaScript syntax OK: " +
-            scripts.length +
+            "JavaScript syntax OK: "+
+            scripts.length+
             " block(s)"
           );
           NODE
-
-
-      # ------------------------------------------------------------
-      # 12. Java 17
-      # ------------------------------------------------------------
 
       - name: Setup Java 17
         uses: actions/setup-java@v5
@@ -524,16 +354,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-
-      # ------------------------------------------------------------
-      # 13. Gradle 8.9
-      # ------------------------------------------------------------
-
       - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-
 
       - name: Verify Gradle installation
         shell: bash
@@ -543,11 +367,6 @@ jobs:
           gradle --version
 
           echo "Gradle 8.9 is ready."
-
-
-      # ------------------------------------------------------------
-      # 14. مفتاح التوقيع الثابت
-      # ------------------------------------------------------------
 
       - name: Prepare fixed V8 signing key
         shell: bash
@@ -559,9 +378,7 @@ jobs:
           set -euo pipefail
 
           test -n "$ANDROID_KEYSTORE_BASE64"
-
           test -n "$ANDROID_KEYSTORE_PASSWORD"
-
           test -n "$ANDROID_KEY_PASSWORD"
 
           KEYSTORE="$RUNNER_TEMP/groupfinance-v8.keystore"
@@ -582,11 +399,6 @@ jobs:
           echo "KEYSTORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
 
           echo "Fixed V8 signing key: VERIFIED"
-
-
-      # ------------------------------------------------------------
-      # 15. شهادة التوقيع
-      # ------------------------------------------------------------
 
       - name: Verify V8 signing certificate
         shell: bash
@@ -621,11 +433,6 @@ jobs:
 
           echo "V8 signing certificate: VERIFIED"
 
-
-      # ------------------------------------------------------------
-      # 16. إعداد التوقيع
-      # ------------------------------------------------------------
-
       - name: Create signing properties
         shell: bash
         env:
@@ -644,11 +451,6 @@ jobs:
           chmod 600 "$PROJECT_ROOT/signing.properties"
 
           echo "Signing properties: CREATED"
-
-
-      # ------------------------------------------------------------
-      # 17. إصدار التطبيق
-      # ------------------------------------------------------------
 
       - name: Configure release version
         shell: bash
@@ -669,9 +471,7 @@ jobs:
           from pathlib import Path
 
           file = Path(sys.argv[1])
-
           version_code = sys.argv[2]
-
           version_name = sys.argv[3]
 
           text = file.read_text(
@@ -693,11 +493,9 @@ jobs:
           )
 
           if n1 != 1 or n2 != 1:
-
               print(
                   "Unable to safely update Android version."
               )
-
               sys.exit(1)
 
           file.write_text(
@@ -707,13 +505,7 @@ jobs:
           PY
 
           echo "versionCode=$VERSION_CODE"
-
           echo "versionName=$VERSION_NAME"
-
-
-      # ------------------------------------------------------------
-      # 18. فحص Gradle
-      # ------------------------------------------------------------
 
       - name: Verify Gradle configuration
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -725,11 +517,6 @@ jobs:
 
           echo "Gradle configuration: VERIFIED"
 
-
-      # ------------------------------------------------------------
-      # 19. تنظيف
-      # ------------------------------------------------------------
-
       - name: Clean Gradle project
         working-directory: ${{ env.PROJECT_ROOT }}
         shell: bash
@@ -737,11 +524,6 @@ jobs:
           set -euo pipefail
 
           gradle clean --no-daemon
-
-
-      # ------------------------------------------------------------
-      # 20. بناء APK
-      # ------------------------------------------------------------
 
       - name: Build signed release APK
         working-directory: ${{ env.PROJECT_ROOT }}
@@ -752,11 +534,6 @@ jobs:
           gradle assembleRelease \
             --no-daemon \
             --stacktrace
-
-
-      # ------------------------------------------------------------
-      # 21. العثور على APK
-      # ------------------------------------------------------------
 
       - name: Locate release APK
         shell: bash
@@ -771,7 +548,6 @@ jobs:
           )"
 
           if [ -z "$APK" ]; then
-
             echo "::error::No APK was produced."
 
             find "$PROJECT_ROOT/app/build/outputs" \
@@ -787,11 +563,6 @@ jobs:
           echo "$APK"
 
           ls -lh "$APK"
-
-
-      # ------------------------------------------------------------
-      # 22. فحص اسم الحزمة والإصدار
-      # ------------------------------------------------------------
 
       - name: Verify APK package and version
         shell: bash
@@ -829,11 +600,6 @@ jobs:
               "versionName='$VERSION_NAME'"
 
           echo "APK package/version: VERIFIED"
-
-
-      # ------------------------------------------------------------
-      # 23. فحص توقيع APK
-      # ------------------------------------------------------------
 
       - name: Verify final APK signing certificate
         shell: bash
@@ -879,11 +645,6 @@ jobs:
 
           echo "FINAL APK SIGNATURE: VERIFIED"
 
-
-      # ------------------------------------------------------------
-      # 24. تجهيز APK النهائي
-      # ------------------------------------------------------------
-
       - name: Prepare final APK
         shell: bash
         run: |
@@ -892,7 +653,6 @@ jobs:
           FINAL="$RUNNER_TEMP/final"
 
           rm -rf "$FINAL"
-
           mkdir -p "$FINAL"
 
           cp "$RELEASE_APK" \
@@ -904,11 +664,6 @@ jobs:
 
           ls -lh "$FINAL"
 
-
-      # ------------------------------------------------------------
-      # 25. رفع Artifact
-      # ------------------------------------------------------------
-
       - name: Upload final APK as GitHub Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -917,19 +672,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-
-      # ------------------------------------------------------------
-      # 26. نشر APK داخل GitHub
-      # ------------------------------------------------------------
-
       - name: Publish APK directly into GitHub repository
         shell: bash
         run: |
           set -euo pipefail
 
           DOWNLOAD_DIR="$GITHUB_WORKSPACE/downloads"
-
-          echo "Fetching latest repository state..."
 
           git fetch origin "$GITHUB_REF_NAME"
 
@@ -960,23 +708,16 @@ jobs:
             downloads/GroupFinance_V8_FINAL_UPDATE.sha256
 
           if git diff --cached --quiet; then
-
             echo "No new APK files to commit."
-
             exit 0
-
           fi
 
           git commit \
-            -m "Publish V8 APK for direct GitHub download [skip ci]"
+            -m "Publish V8 Native Restore Compile Fixed APK [skip ci]"
 
           git push \
             origin \
             "HEAD:${GITHUB_REF_NAME}"
 
-          echo ""
-          echo "=========================================="
-          echo "APK PUBLISHED SUCCESSFULLY"
-          echo "=========================================="
-
+          echo "APK published successfully."
           echo "downloads/GroupFinance_V8_FINAL_UPDATE.apk"
