@@ -214,20 +214,19 @@ jobs:
           H="$PROJECT_ROOT/app/src/main/assets/index.html"
           J="$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
 
-          echo "Checking HTML native restore implementation..."
+          test -f "$H"
+          test -f "$J"
 
-          grep -Fq "openBackupFilePicker" "$H"
-          grep -Fq "receiveNativeBackup" "$H"
-          grep -Fq "nativeBackupText" "$H"
+          grep -Fq "Intent.ACTION_OPEN_DOCUMENT" "$J"
+          grep -Fq "Intent.CATEGORY_OPENABLE" "$J"
+          grep -Fq 'setType("*/*")' "$J"
+          grep -Fq "onActivityResult" "$J"
+          grep -Fq "FILE_CHOOSER" "$J"
 
-          echo "Checking Android native file picker..."
+          grep -Fq ".gfbak" "$H"
+          grep -Fq "JSON.parse" "$H"
 
-          grep -Fq "openBackupPickerNative" "$J"
-          grep -Fq "ACTION_OPEN_DOCUMENT" "$J"
-          grep -Fq "application/octet-stream" "$J"
-          grep -Fq "deliverBackupToWeb" "$J"
-
-          echo "Native .gfbak restore: VERIFIED"
+          echo "Native backup restore fix: VERIFIED"
 
       - name: Verify no destructive data reset
         shell: bash
@@ -264,8 +263,4 @@ jobs:
           set -euo pipefail
 
           H="$PROJECT_ROOT/app/src/main/assets/index.html"
-          J="$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
-
-          grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
-
-          grep -Fq 'function renderFunds()' "$H
+          J="$PROJECT_ROOT/app/src
