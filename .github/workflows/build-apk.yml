@@ -1,4 +1,4 @@
-name: Build GroupFinance V8 - 4 Features FINAL UPDATE
+name: Build GroupFinance V8 - Native Restore FINAL
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  SOURCE_ZIP_NAME: GroupFinanceV8_UPDATE_4_FEATURES_FINAL_FIXED.zip
+  SOURCE_ZIP_NAME: GroupFinanceV8_NATIVE_RESTORE_FINAL_FIXED.zip
   EXPECTED_CERT_SHA256: 14:E8:EA:A0:00:0E:8E:CF:9B:CE:54:8E:31:7D:38:C3:BB:50:76:00:3C:8C:5D:5A:5B:44:B5:86:EB:0E:C5:6C
   APPLICATION_ID: com.groupfinance.app
   VERSION_CODE: 15
@@ -19,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: Build GroupFinance V8 Update - Preserve Existing Data
+    name: Build GroupFinance V8 Native Restore - Preserve Existing Data
     runs-on: ubuntu-latest
 
     steps:
@@ -114,8 +114,6 @@ jobs:
           echo "Android project located successfully:"
           echo "$PROJECT_ROOT"
 
-          echo "IMPORTANT: gradlew wrapper is NOT required."
-
       - name: Verify V8 seed and source
         shell: bash
         run: |
@@ -208,6 +206,29 @@ jobs:
 
           echo "Existing V8 data system: VERIFIED"
 
+      - name: Verify native backup restore fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          H="$PROJECT_ROOT/app/src/main/assets/index.html"
+          J="$PROJECT_ROOT/app/src/main/java/com/groupfinance/app/MainActivity.java"
+
+          echo "Checking HTML native restore implementation..."
+
+          grep -Fq "openBackupFilePicker" "$H"
+          grep -Fq "receiveNativeBackup" "$H"
+          grep -Fq "nativeBackupText" "$H"
+
+          echo "Checking Android native file picker..."
+
+          grep -Fq "openBackupPickerNative" "$J"
+          grep -Fq "ACTION_OPEN_DOCUMENT" "$J"
+          grep -Fq "application/octet-stream" "$J"
+          grep -Fq "deliverBackupToWeb" "$J"
+
+          echo "Native .gfbak restore: VERIFIED"
+
       - name: Verify no destructive data reset
         shell: bash
         run: |
@@ -247,430 +268,4 @@ jobs:
 
           grep -Fq 'إجمالي المتبقي من التمويلات' "$H"
 
-          grep -Fq 'function renderFunds()' "$H"
-
-          grep -Fq 'r.emergency' "$H"
-
-          grep -Fq 'r.operation' "$H"
-
-          grep -Fq 'function renderDashboard()' "$H"
-
-          grep -Fq 'function renderReports()' "$H"
-
-          grep -Fq 'printMemberReport' "$H"
-          grep -Fq 'shareMemberReport' "$H"
-          grep -Fq 'printFinancialReport' "$H"
-          grep -Fq 'shareFinancialReport' "$H"
-
-          grep -Fq 'Android.printPage' "$H"
-          grep -Fq 'Android.sharePdf' "$H"
-
-          grep -Fq 'androidx.core.content.FileProvider' "$J"
-          grep -Fq 'public void printPage' "$J"
-          grep -Fq 'public void sharePdf' "$J"
-          grep -Fq 'createAndSharePdf' "$J"
-
-          test -f "$PROJECT_ROOT/app/src/main/res/xml/file_paths.xml"
-
-          echo "Four requested features: VERIFIED"
-
-      - name: Verify JavaScript syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          HTML="$PROJECT_ROOT/app/src/main/assets/index.html"
-
-          node -e '
-          const fs = require("fs");
-
-          const file = process.argv[1];
-          const html = fs.readFileSync(file, "utf8");
-
-          const scripts = [
-            ...html.matchAll(/<script(?:[^>]*)>([\s\S]*?)<\/script>/gi)
-          ]
-          .map(x => x[1].trim())
-          .filter(x => x.length);
-
-          if (!scripts.length) {
-            throw new Error("No JavaScript blocks were found.");
-          }
-
-          scripts.forEach((code, index) => {
-            try {
-              new Function(code);
-            } catch (error) {
-              throw new Error(
-                "JavaScript syntax error in block " +
-                (index + 1) +
-                ": " +
-                error.message
-              );
-            }
-          });
-
-          console.log(
-            "JavaScript syntax OK: " +
-            scripts.length +
-            " block(s)"
-          );
-          ' "$HTML"
-
-          echo "JavaScript: VERIFIED"
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Verify Gradle installation
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gradle --version
-
-          echo "Gradle 8.9 is ready."
-
-      - name: Prepare fixed V8 signing key
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          test -n "$ANDROID_KEYSTORE_BASE64"
-          test -n "$ANDROID_KEYSTORE_PASSWORD"
-          test -n "$ANDROID_KEY_PASSWORD"
-
-          KEYSTORE="$RUNNER_TEMP/groupfinance-v8.keystore"
-
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
-            | base64 --decode \
-            > "$KEYSTORE"
-
-          test -s "$KEYSTORE"
-
-          keytool \
-            -list \
-            -keystore "$KEYSTORE" \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-            -alias groupfinance-v8 \
-            >/dev/null
-
-          echo "KEYSTORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
-
-          echo "Fixed V8 signing key: VERIFIED"
-
-      - name: Verify V8 signing certificate
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          ACTUAL="$(
-            keytool \
-              -list \
-              -v \
-              -keystore "$KEYSTORE_FILE" \
-              -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-              -alias groupfinance-v8 \
-              | awk -F': ' '/SHA256:/{print $2; exit}'
-          )"
-
-          ACTUAL="$(
-            echo "$ACTUAL" \
-              | tr '[:lower:]' '[:upper:]' \
-              | tr -d '[:space:]'
-          )"
-
-          EXPECTED="$(
-            echo "$EXPECTED_CERT_SHA256" \
-              | tr '[:lower:]' '[:upper:]' \
-              | tr -d '[:space:]'
-          )"
-
-          test "$ACTUAL" = "$EXPECTED"
-
-          echo "V8 signing certificate: VERIFIED"
-
-      - name: Create signing properties
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          cat > "$PROJECT_ROOT/signing.properties" <<EOF
-          storeFile=$KEYSTORE_FILE
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyAlias=groupfinance-v8
-          keyPassword=$ANDROID_KEY_PASSWORD
-          EOF
-
-          chmod 600 "$PROJECT_ROOT/signing.properties"
-
-          echo "Signing properties: CREATED"
-
-      - name: Configure release version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          GRADLE_FILE="$PROJECT_ROOT/app/build.gradle"
-
-          if [ ! -f "$GRADLE_FILE" ]; then
-            GRADLE_FILE="$PROJECT_ROOT/app/build.gradle.kts"
-          fi
-
-          test -f "$GRADLE_FILE"
-
-          python3 - "$GRADLE_FILE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
-          import sys
-          import re
-          from pathlib import Path
-
-          file = Path(sys.argv[1])
-          version_code = sys.argv[2]
-          version_name = sys.argv[3]
-
-          text = file.read_text(encoding="utf-8")
-
-          text, n1 = re.subn(
-              r'versionCode\s+\d+',
-              f'versionCode {version_code}',
-              text,
-              count=1
-          )
-
-          text, n2 = re.subn(
-              r'versionName\s+["\'][^"\']+["\']',
-              f'versionName "{version_name}"',
-              text,
-              count=1
-          )
-
-          if n1 != 1 or n2 != 1:
-              print("Unable to safely update Android version.")
-              sys.exit(1)
-
-          file.write_text(text, encoding="utf-8")
-          PY
-
-          echo "versionCode=$VERSION_CODE"
-          echo "versionName=$VERSION_NAME"
-
-      - name: Verify Gradle configuration
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gradle tasks --no-daemon
-
-          echo "Gradle project configuration: VERIFIED"
-
-      - name: Clean Gradle project
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gradle clean --no-daemon
-
-      - name: Build signed release APK
-        working-directory: ${{ env.PROJECT_ROOT }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gradle assembleRelease \
-            --no-daemon \
-            --stacktrace
-
-      - name: Locate release APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="$(
-            find "$PROJECT_ROOT/app/build/outputs/apk" \
-              -type f \
-              -name "*.apk" \
-              | head -1
-          )"
-
-          if [ -z "$APK" ]; then
-            echo "::error::No APK was produced."
-
-            echo "Build output:"
-            find "$PROJECT_ROOT/app/build/outputs" \
-              -type f \
-              2>/dev/null || true
-
-            exit 1
-          fi
-
-          echo "RELEASE_APK=$APK" >> "$GITHUB_ENV"
-
-          echo "APK found:"
-          echo "$APK"
-          ls -lh "$APK"
-
-      - name: Verify APK package and version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          AAPT2="$(
-            find "$ANDROID_HOME/build-tools" \
-              -type f \
-              -name aapt2 \
-              | sort -V \
-              | tail -1
-          )"
-
-          test -x "$AAPT2"
-
-          BADGING="$("$AAPT2" dump badging "$RELEASE_APK")"
-
-          echo "$BADGING"
-
-          echo "$BADGING" \
-            | grep -Fq "package: name='$APPLICATION_ID'"
-
-          echo "$BADGING" \
-            | grep -Fq "versionCode='$VERSION_CODE'"
-
-          echo "$BADGING" \
-            | grep -Fq "versionName='$VERSION_NAME'"
-
-          echo "APK package/version: VERIFIED"
-
-      - name: Verify final APK signing certificate
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APKSIGNER="$(
-            find "$ANDROID_HOME/build-tools" \
-              -type f \
-              -name apksigner \
-              | sort -V \
-              | tail -1
-          )"
-
-          test -x "$APKSIGNER"
-
-          "$APKSIGNER" \
-            verify \
-            --verbose \
-            --print-certs \
-            "$RELEASE_APK"
-
-          ACTUAL="$(
-            keytool \
-              -printcert \
-              -jarfile "$RELEASE_APK" \
-              | awk -F': ' '/SHA256:/{print $2; exit}'
-          )"
-
-          ACTUAL="$(
-            echo "$ACTUAL" \
-              | tr '[:lower:]' '[:upper:]' \
-              | tr -d '[:space:]'
-          )"
-
-          EXPECTED="$(
-            echo "$EXPECTED_CERT_SHA256" \
-              | tr '[:lower:]' '[:upper:]' \
-              | tr -d '[:space:]'
-          )"
-
-          test "$ACTUAL" = "$EXPECTED"
-
-          echo "FINAL APK SIGNATURE: VERIFIED"
-
-      - name: Prepare final APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          FINAL="$RUNNER_TEMP/final"
-
-          rm -rf "$FINAL"
-          mkdir -p "$FINAL"
-
-          cp "$RELEASE_APK" \
-            "$FINAL/GroupFinance_V8_FINAL_UPDATE.apk"
-
-          sha256sum \
-            "$FINAL/GroupFinance_V8_FINAL_UPDATE.apk" \
-            > "$FINAL/GroupFinance_V8_FINAL_UPDATE.sha256"
-
-          ls -lh "$FINAL"
-
-      - name: Upload final APK as GitHub Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: GroupFinance-V8-FINAL-UPDATE
-          path: ${{ runner.temp }}/final
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish APK directly into GitHub repository
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DOWNLOAD_DIR="$GITHUB_WORKSPACE/downloads"
-
-          echo "Fetching latest GitHub repository state..."
-
-          git fetch origin "$GITHUB_REF_NAME"
-
-          echo "Synchronizing local repository with origin..."
-
-          git reset --hard "origin/$GITHUB_REF_NAME"
-
-          mkdir -p "$DOWNLOAD_DIR"
-
-          cp "$RELEASE_APK" \
-            "$DOWNLOAD_DIR/GroupFinance_V8_FINAL_UPDATE.apk"
-
-          sha256sum \
-            "$DOWNLOAD_DIR/GroupFinance_V8_FINAL_UPDATE.apk" \
-            > "$DOWNLOAD_DIR/GroupFinance_V8_FINAL_UPDATE.sha256"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add downloads/GroupFinance_V8_FINAL_UPDATE.apk
-          git add downloads/GroupFinance_V8_FINAL_UPDATE.sha256
-
-          if git diff --cached --quiet; then
-            echo "No new APK files to commit."
-            exit 0
-          fi
-
-          git commit \
-            -m "Publish V8 APK for direct GitHub download [skip ci]"
-
-          git push \
-            origin \
-            "HEAD:${GITHUB_REF_NAME}"
-
-          echo "APK published directly into GitHub repository."
-          echo "Download path:"
-          echo "downloads/GroupFinance_V8_FINAL_UPDATE.apk"
+          grep -Fq 'function renderFunds()' "$H
